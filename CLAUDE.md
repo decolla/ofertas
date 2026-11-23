@@ -12,13 +12,26 @@ systemd user timer (a cada 20 min).
 2. **Armazenamento** — `ofertas/storage.py`, `sqlite3` puro, migrações por
    `PRAGMA user_version`. Tabelas: offers, price_history, sent, verdicts, usage,
    source_health, settings.
-3. **Inteligência (Claude CLI)** — `ofertas/triage.py` (etapa 2). `claude -p`
-   headless, `--model haiku`, `--output-format json`, `--json-schema`,
-   `--max-turns 1`, sem ferramentas. O Claude só recebe dados já coletados; nunca
-   navega. Lotes de ~20 ofertas. Teto diário de chamadas (padrão 100) na tabela
-   `usage`; ao atingir, para e avisa no Telegram uma vez.
-4. **Critério** — `ofertas/criteria.py`, função pura que devolve
-   `Decision(ok, reasons)`. Tudo configurável em `config.yaml`.
+3. **Inteligência (Claude CLI)** — `ofertas/triage.py`. `claude -p --model haiku
+   --output-format json --json-schema <SCHEMA> --system-prompt <nosso>
+   --max-turns 2 --tools "" --strict-mcp-config --setting-sources ""
+   --no-session-persistence`, prompt via stdin, cwd `data/claude-cwd/` (vazio,
+   para não carregar este CLAUDE.md). `--max-turns 2` porque a saída
+   estruturada consome um turno interno (verificado: `num_turns: 2`). A resposta
+   vem em `structured_output`, validada por `ofertas/schema.py` (validador
+   próprio, sem dependência). O Claude nunca navega; os textos das ofertas são
+   tratados como dados (o prompt manda ignorar instruções neles).
+   - Só são enviadas ao Claude as ofertas que **passaram na fase objetiva**;
+     vereditos ficam em cache por (oferta, preço) na tabela `verdicts`.
+   - Lotes de `claude.batch_size` (20). Cada chamada conta em `usage` **antes**
+     de ser feita; ao atingir `daily_call_limit` (100) para e avisa uma vez.
+   - Custo medido: ~US$ 0,002 e ~13 s por lote de 5 ofertas.
+4. **Critério** — `ofertas/criteria.py`, funções puras em duas fases:
+   `objective()` (loja, dedupe, sinal de preço) e `with_verdict()` (nota ≥
+   `min_score`, não fake, não usado/recondicionado, categoria habilitada).
+   `condition: desconhecido` é aceito. Sem veredito → `pending` (⏳ no dry-run).
+   O runner reavalia todas as ofertas listadas a cada execução (barato; o
+   dedupe impede reenvio), para que uma oferta que esquenta depois tenha chance.
 5. **Notificação** — `ofertas/notify.py`, HTTP direto na Bot API (sem
    python-telegram-bot). Chat privado único; comandos só do `TELEGRAM_CHAT_ID`.
 
@@ -45,8 +58,9 @@ systemd user timer (a cada 20 min).
   de adicionar outra.
 - Segredos só em `.env` (fora do git); `.env.example` documenta as chaves.
 - Logs estruturados JSON (uma linha por evento) em `logs/ofertas.log` + stderr.
-- `--dry-run` roda tudo dentro de uma transação que sofre rollback e imprime no
-  terminal: não envia nada e não altera o banco.
+- `--dry-run` roda sobre `Storage.snapshot()` (cópia em memória): não envia nada
+  e não altera o banco. Por padrão não chama o Claude (usa só vereditos em
+  cache); com `--with-claude` chama, e o uso é contado no banco **real**.
 - Testes: `pytest`, fixtures em `tests/fixtures/` (HTML/JSON salvos). Nenhum
   teste acessa a rede; HTTP é simulado com `httpx.MockTransport`.
 
@@ -56,12 +70,14 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest
 .venv/bin/ofertas run --dry-run          # coleta real, sem enviar
 .venv/bin/ofertas run --source promobit  # só uma fonte
+.venv/bin/ofertas run --dry-run --with-claude  # idem, chamando o Claude
 .venv/bin/ofertas test-telegram          # manda mensagem de teste
+.venv/bin/ofertas status                 # uso do Claude hoje, saúde das fontes
 ```
 
 ## Entrega em etapas
 1. MVP: Promobit + Gatry, SQLite, dedupe, Telegram sem Claude. ✅ (critério
    provisório: desconto declarado + comunidade)
-2. Claude CLI: classificar, normalizar nome, detectar fake, nota 0-100.
+2. Claude CLI: classificar, normalizar nome, detectar fake, nota 0-100. ✅
 3. Histórico de preços e critério estatístico (mediana 30-90d / menor preço).
 4. Mais fontes, comandos do bot, systemd, README de deploy.

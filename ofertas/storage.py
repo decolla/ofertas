@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from ofertas.models import RawOffer, StoredOffer
+from ofertas.models import RawOffer, StoredOffer, Verdict
 from ofertas.normalize import canonical_url, normalize_store, normalize_title, product_key
 
 MIGRATIONS: list[str] = [
@@ -96,6 +96,8 @@ MIGRATIONS: list[str] = [
         value TEXT NOT NULL
     );
     """,
+    # v2: Claude's condition judgement (novo/usado/...)
+    "ALTER TABLE verdicts ADD COLUMN condition TEXT",
 ]
 
 # A new price-history point is recorded when the price changes, or at most
@@ -248,6 +250,71 @@ class Storage:
 
     def source_alerted(self, source: str) -> None:
         self.conn.execute("UPDATE source_health SET alerted = 1 WHERE source = ?", (source,))
+
+    # -- verdicts ---------------------------------------------------------
+    def get_verdict(self, offer_id: int, price: float) -> Verdict | None:
+        row = self.conn.execute(
+            "SELECT * FROM verdicts WHERE offer_id = ? AND abs(price - ?) < 0.01",
+            (offer_id, price),
+        ).fetchone()
+        if row is None:
+            return None
+        return Verdict(
+            score=row["score"], fake=bool(row["is_fake"]), flags=json.loads(row["flags_json"]),
+            category=row["category"], name_norm=row["name_norm"],
+            condition=row["condition"], reason=row["reason"], model=row["model"],
+        )
+
+    def save_verdict(self, offer_id: int, price: float, v: Verdict, now: datetime | None = None):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO verdicts (offer_id, price, score, is_fake, flags_json, "
+            "category, name_norm, condition, reason, model, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (offer_id, price, v.score, int(v.fake), json.dumps(v.flags), v.category,
+             v.name_norm, v.condition, v.reason, v.model, _iso(now or utcnow())),
+        )
+        self.conn.execute("UPDATE offers SET category = ? WHERE id = ?", (v.category, offer_id))
+
+    # -- Claude usage (daily budget) --------------------------------------
+    def claude_calls(self, day: date) -> int:
+        row = self.conn.execute(
+            "SELECT claude_calls FROM usage WHERE day = ?", (day.isoformat(),)
+        ).fetchone()
+        return row["claude_calls"] if row else 0
+
+    def add_claude_call(self, day: date) -> None:
+        self.conn.execute(
+            "INSERT INTO usage (day, claude_calls) VALUES (?, 1) ON CONFLICT(day) "
+            "DO UPDATE SET claude_calls = claude_calls + 1",
+            (day.isoformat(),),
+        )
+
+    def add_claude_cost(self, day: date, cost: float) -> None:
+        self.conn.execute(
+            "UPDATE usage SET cost_usd = cost_usd + ? WHERE day = ?", (cost, day.isoformat())
+        )
+
+    def limit_alerted(self, day: date) -> bool:
+        row = self.conn.execute(
+            "SELECT limit_alerted FROM usage WHERE day = ?", (day.isoformat(),)
+        ).fetchone()
+        return bool(row and row["limit_alerted"])
+
+    def set_limit_alerted(self, day: date) -> None:
+        self.conn.execute(
+            "INSERT INTO usage (day, limit_alerted) VALUES (?, 1) ON CONFLICT(day) "
+            "DO UPDATE SET limit_alerted = 1",
+            (day.isoformat(),),
+        )
+
+    # -- dry-run support --------------------------------------------------
+    def snapshot(self) -> "Storage":
+        """In-memory copy of the whole DB: dry-runs work on it and vanish."""
+        copy = Storage.__new__(Storage)
+        copy.conn = sqlite3.connect(":memory:", isolation_level=None)
+        copy.conn.row_factory = sqlite3.Row
+        self.conn.backup(copy.conn)
+        return copy
 
     # -- settings ---------------------------------------------------------
     def get_setting(self, key: str, default: str | None = None) -> str | None:

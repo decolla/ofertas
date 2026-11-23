@@ -1,0 +1,22 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "num_turns": 2,
+  "total_cost_usd": 0.0021,
+  "result": "",
+  "structured_output": {
+    "items": [
+      {"id": "1", "category": "cozinha", "name_norm": "Air Fryer Mondial 4L AFN-40", "condition": "novo",
+       "fake": false, "flags": [], "score": 88, "reason": "Costuma custar ~R$ 350; R$ 199 é dos menores preços já vistos."},
+      {"id": "2", "category": "eletronicos", "name_norm": "Smart TV Genérica 55\"", "condition": "novo",
+       "fake": true, "flags": ["preco_de_inflado", "vendedor_duvidoso"], "score": 30, "reason": "Preço 'de' muito acima do mercado."},
+      {"id": "3", "category": "hardware", "name_norm": "SSD Kingston NV3 1TB", "condition": "usado",
+       "fake": false, "flags": ["usado_recondicionado"], "score": 85, "reason": "Bom preço, mas é vitrine."},
+      {"id": "999", "category": "outros", "name_norm": "Intruso", "condition": "novo",
+       "fake": false, "flags": [], "score": 100, "reason": "id que não foi enviado"},
+      {"id": "4", "category": "nao_existe", "name_norm": "X", "condition": "novo",
+       "fake": false, "flags": [], "score": 101, "reason": "inválido"}
+    ]
+  }
+}

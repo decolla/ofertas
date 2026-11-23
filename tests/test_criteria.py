@@ -1,6 +1,6 @@
 import pytest
 
-from ofertas.criteria import evaluate, store_allowed
+from ofertas.criteria import objective as evaluate, store_allowed
 from ofertas.models import RawOffer
 
 CRIT = {"fallback": {"min_declared_discount": 0.30, "min_votes": 15, "min_temperature": 300}}

@@ -43,7 +43,23 @@ class StoredOffer:
 
 
 @dataclass
+class Verdict:
+    """Claude's judgement of one offer at one price."""
+
+    score: int
+    fake: bool
+    flags: list[str]
+    category: str
+    name_norm: str
+    condition: str
+    reason: str
+    model: str = "haiku"
+
+
+@dataclass
 class Decision:
     ok: bool
     reasons: list[str] = field(default_factory=list)
     insufficient_history: bool = False
+    verdict: Verdict | None = None
+    pending: bool = False  # waiting for a Claude verdict

@@ -67,7 +67,11 @@ criteria:
   max_notifications_per_run: 5
 
 claude:
-  enabled: false           # ligado na etapa 2
+  enabled: true
+  command: claude
+  model: haiku
+  batch_size: 20
+  timeout_seconds: 180
   daily_call_limit: 100
 
 health:

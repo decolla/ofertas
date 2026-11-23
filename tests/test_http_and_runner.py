@@ -125,8 +125,9 @@ def test_broken_source_does_not_stop_others_and_alerts_after_threshold(cfg):
 
 
 def test_dry_run_prints_and_writes_nothing(cfg):
-    db, out = Storage(":memory:"), []
-    rep = run(cfg, client_for(ROUTES_OK), db, ConsoleNotifier(out.append), dry_run=True)
+    real, out = Storage(":memory:"), []
+    rep = run(cfg, client_for(ROUTES_OK), real.snapshot(), ConsoleNotifier(out.append), dry_run=True)
+    db = real
     assert len(rep.sent) == 1 and "Mondial Ventilador" in out[0] and "<b>" not in out[0]
     assert db.conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0] == 0
     assert db.conn.execute("SELECT COUNT(*) FROM sent").fetchone()[0] == 0
@@ -138,3 +139,54 @@ def test_paused_collects_but_does_not_send(cfg):
     run(cfg, client_for(ROUTES_OK), db, tg)
     assert tg.offers == []
     assert db.conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0] == 52
+
+
+# -- runner + Claude ---------------------------------------------------------
+from datetime import date  # noqa: E402
+
+from ofertas.triage import Triage  # noqa: E402
+
+
+class CountingCLI:
+    def __init__(self, score):
+        self.score, self.calls = score, 0
+
+    def __call__(self, prompt):
+        self.calls += 1
+        ids = [o["id"] for o in json.loads(prompt.split("\n", 1)[1])]
+        return {"subtype": "success", "is_error": False, "total_cost_usd": 0.001,
+                "structured_output": {"items": [
+                    {"id": i, "category": "casa", "name_norm": "Ventilador Mondial 30cm",
+                     "condition": "novo", "fake": False, "flags": [], "score": self.score,
+                     "reason": "Excelente preço"} for i in ids]}}
+
+
+def claude_cfg(cfg):
+    cfg.data["claude"] = {"enabled": True}
+    cfg.data["criteria"]["min_score"] = 80
+    cfg.data["categories"] = {"enabled": ["casa", "cozinha"]}
+    return cfg
+
+
+def test_claude_only_sees_objective_passes_and_is_cached(cfg):
+    cfg, db, tg = claude_cfg(cfg), Storage(":memory:"), FakeTelegram()
+    cli = CountingCLI(score=90)
+    tri = Triage(cli, db, daily_limit=10, today=lambda: date(2026, 11, 23))
+    run(cfg, client_for(ROUTES_OK), db, tg, triage=tri)
+    assert cli.calls == 1 and [o.raw.source_id for o in tg.offers] == ["3242903"]
+    run(cfg, client_for(ROUTES_OK), db, tg, triage=tri)
+    assert cli.calls == 1  # cached verdict, deduped send
+
+
+def test_low_claude_score_blocks_send(cfg):
+    cfg, db, tg = claude_cfg(cfg), Storage(":memory:"), FakeTelegram()
+    tri = Triage(CountingCLI(score=60), db, daily_limit=10, today=lambda: date(2026, 11, 23))
+    rep = run(cfg, client_for(ROUTES_OK), db, tg, triage=tri)
+    assert tg.offers == []
+    assert any("nota 60 < 80" in d.reasons for _, d in rep.evaluated)
+
+
+def test_no_triage_leaves_offer_pending(cfg):
+    cfg, db, tg = claude_cfg(cfg), Storage(":memory:"), FakeTelegram()
+    rep = run(cfg, client_for(ROUTES_OK), db, tg, triage=None)
+    assert tg.offers == [] and sum(d.pending for _, d in rep.evaluated) == 1

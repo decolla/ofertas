@@ -18,10 +18,21 @@ def brl(value: float) -> str:
     return "R$ " + s.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+CATEGORY_EMOJI = {
+    "hardware": "🖥️", "eletronicos": "📱", "casa": "🏠", "consumo": "🛒",
+    "cozinha": "🍳", "jogos_tabuleiro": "🎲", "outros": "📦",
+}
+
+
 def format_offer(offer: StoredOffer, decision: Decision) -> str:
     r = offer.raw
+    v = decision.verdict
     e = html.escape
-    lines = [f"🍌 <b>{e(r.title)}</b>", ""]
+    if v:
+        lines = [f"🍌 {CATEGORY_EMOJI.get(v.category, '📦')} <b>{e(v.name_norm)}</b>",
+                 f"<i>{e(r.title)}</i>", ""]
+    else:
+        lines = [f"🍌 <b>{e(r.title)}</b>", ""]
     price_line = f"💰 <b>{brl(r.price)}</b>"
     if r.list_price:
         price_line += f"  <s>{brl(r.list_price)}</s>"
@@ -35,6 +46,11 @@ def format_offer(offer: StoredOffer, decision: Decision) -> str:
         lines.append("🚚 Frete grátis")
     if r.votes is not None or r.temperature is not None:
         lines.append(f"👍 {r.votes or 0} likes · 🔥 {r.temperature or 0:.0f}")
+    if v:
+        lines.append("")
+        lines.append(f"⭐ Nota <b>{v.score}</b>/100 — {e(v.reason)}")
+        if v.flags:
+            lines.append(f"🚩 {e(', '.join(f.replace('_', ' ') for f in v.flags))}")
     if decision.insufficient_history:
         lines.append("")
         lines.append("⚠️ <i>Histórico insuficiente: baseado no desconto declarado e na comunidade.</i>")

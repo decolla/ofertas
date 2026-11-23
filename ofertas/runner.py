@@ -17,6 +17,7 @@ from ofertas.models import Decision, RawOffer, StoredOffer
 from ofertas.notify import format_offer
 from ofertas.sources import REGISTRY
 from ofertas.storage import Storage, utcnow
+from ofertas.triage import Triage
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class RunReport:
 
 @contextmanager
 def _tx(storage: Storage):
-    """Transaction unless one is already open (dry-run wraps everything)."""
+    """Transaction unless one is already open."""
     if storage.conn.in_transaction:
         yield
         return
@@ -108,64 +109,91 @@ def collect(
     return raws
 
 
+def judge(
+    cfg: Config, storage: Storage, triage: Triage | None,
+    pre: list[tuple[StoredOffer, Decision]],
+) -> list[tuple[StoredOffer, Decision]]:
+    """Phase 2: attach Claude verdicts (cached per offer+price) to objective passes."""
+    if not cfg.get("claude.enabled", False):
+        return pre
+    min_score = cfg.get("criteria.min_score", 80)
+    categories = storage.get_setting("categories")
+    enabled = categories.split(",") if categories else cfg.get("categories.enabled")
+
+    need = [off for off, d in pre if d.ok and storage.get_verdict(off.id, off.raw.price) is None]
+    if need and triage is not None:
+        fresh = triage.judge(need)
+        with _tx(storage):
+            for off in need:
+                if off.id in fresh:
+                    storage.save_verdict(off.id, off.raw.price, fresh[off.id])
+    out = []
+    for off, d in pre:
+        if not d.ok:
+            out.append((off, d))
+            continue
+        v = storage.get_verdict(off.id, off.raw.price)
+        out.append((off, criteria.with_verdict(d, v, min_score, enabled)))
+    return out
+
+
 def run(
     cfg: Config,
     client: PoliteClient,
     storage: Storage,
     notifier: Notifier,
+    triage: Triage | None = None,
     dry_run: bool = False,
     only_source: str | None = None,
     max_notifications: int | None = None,
     now: datetime | None = None,
 ) -> RunReport:
+    """One cycle. For --dry-run pass a Storage.snapshot(): nothing persists."""
     now = now or utcnow()
     report = RunReport()
-    if dry_run:
-        storage.begin()  # everything below is rolled back at the end
-    try:
-        raws = collect(cfg, client, storage, notifier, report, only_source)
+    raws = collect(cfg, client, storage, notifier, report, only_source)
+    with _tx(storage):
+        stored = [storage.upsert_offer(r, now) for r in raws]
+
+    # Every offer currently listed is judged each run: the objective phase is
+    # local and cheap, dedupe stops repeats, and verdicts are cached, so an
+    # offer that heats up in the community later still gets its chance.
+    ccfg, scfg = cfg.get("criteria"), cfg.get("stores")
+    pre: list[tuple[StoredOffer, Decision]] = []
+    seen_keys: set[str] = set()
+    for off in stored:
+        dup, why = is_duplicate(
+            storage, off, ccfg["resend_window_hours"], ccfg["resend_min_drop"], now
+        )
+        if not dup and off.product_key in seen_keys:
+            dup, why = True, "repetida em outra fonte nesta execução"
+        d = criteria.objective(off.raw, ccfg, scfg, duplicate_reason=why)
+        if d.ok:
+            seen_keys.add(off.product_key)
+        pre.append((off, d))
+
+    report.evaluated = judge(cfg, storage, triage, pre)
+    passing = [(o, d) for o, d in report.evaluated if d.ok]
+    passing.sort(
+        key=lambda p: (p[1].verdict.score if p[1].verdict else 0, p[0].raw.declared_discount or 0),
+        reverse=True,
+    )
+    cap = max_notifications or ccfg.get("max_notifications_per_run", 5)
+    if storage.get_setting("paused") == "1" and not dry_run:
+        log.info("paused_skip_send", extra={"would_send": len(passing)})
+        passing = []
+    for off, decision in passing[:cap]:
+        try:
+            msg_id = notifier.send_offer(off, decision)
+        except Exception as exc:
+            log.error("send_failed", extra={"offer_id": off.id, "error": str(exc)})
+            continue
         with _tx(storage):
-            stored = [storage.upsert_offer(r, now) for r in raws]
-
-        # Dry-run shows a verdict for everything collected; a real run only
-        # judges what is new or changed price since the last run.
-        candidates = stored if dry_run else [s for s in stored if s.is_new or s.price_changed]
-        ccfg, scfg = cfg.get("criteria"), cfg.get("stores")
-        passing: list[tuple[StoredOffer, Decision]] = []
-        seen_keys: set[str] = set()
-        for off in candidates:
-            dup, why = is_duplicate(
-                storage, off, ccfg["resend_window_hours"], ccfg["resend_min_drop"], now
-            )
-            if not dup and off.product_key in seen_keys:
-                dup, why = True, "repetida em outra fonte nesta execução"
-            decision = criteria.evaluate(off.raw, ccfg, scfg, duplicate_reason=why)
-            report.evaluated.append((off, decision))
-            if decision.ok:
-                seen_keys.add(off.product_key)
-                passing.append((off, decision))
-
-        passing.sort(key=lambda p: p[0].raw.declared_discount or 0, reverse=True)
-        cap = max_notifications or ccfg.get("max_notifications_per_run", 5)
-        paused = storage.get_setting("paused") == "1"
-        if paused and not dry_run:
-            log.info("paused_skip_send", extra={"would_send": len(passing)})
-            passing = []
-        for off, decision in passing[:cap]:
-            try:
-                msg_id = notifier.send_offer(off, decision)
-            except Exception as exc:
-                log.error("send_failed", extra={"offer_id": off.id, "error": str(exc)})
-                continue
-            with _tx(storage):
-                storage.mark_sent(off, msg_id, now)
-            report.sent.append(off)
-            log.info("offer_sent", extra={"offer_id": off.id, "title": off.raw.title,
-                                          "price": off.raw.price, "source": off.raw.source,
-                                          "dry_run": dry_run})
-    finally:
-        if dry_run:
-            storage.rollback()
+            storage.mark_sent(off, msg_id, now)
+        report.sent.append(off)
+        log.info("offer_sent", extra={"offer_id": off.id, "title": off.raw.title,
+                                      "price": off.raw.price, "source": off.raw.source,
+                                      "dry_run": dry_run})
     log.info("run_done", extra={
         "collected": report.collected, "failed": list(report.failed),
         "evaluated": len(report.evaluated), "sent": len(report.sent), "dry_run": dry_run,
