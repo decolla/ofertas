@@ -57,9 +57,21 @@ class Verdict:
 
 
 @dataclass
+class PriceStats:
+    """Current price against our own recorded history for the product."""
+
+    points: int
+    median: float | None = None
+    minimum: float | None = None
+    discount_vs_median: float | None = None
+    is_new_low: bool = False
+
+
+@dataclass
 class Decision:
     ok: bool
     reasons: list[str] = field(default_factory=list)
     insufficient_history: bool = False
     verdict: Verdict | None = None
     pending: bool = False  # waiting for a Claude verdict
+    stats: PriceStats | None = None

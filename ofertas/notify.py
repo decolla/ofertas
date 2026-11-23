@@ -39,6 +39,13 @@ def format_offer(offer: StoredOffer, decision: Decision) -> str:
     if r.declared_discount:
         price_line += f"  (−{r.declared_discount:.0%} declarado)"
     lines.append(price_line)
+    st = decision.stats
+    if st and not decision.insufficient_history and st.median:
+        if st.is_new_low:
+            lines.append(f"🏆 Menor preço já registrado (antes {brl(st.minimum)})")
+        if (st.discount_vs_median or 0) > 0:
+            lines.append(f"📉 {st.discount_vs_median:.0%} abaixo da mediana de {brl(st.median)} "
+                         f"({st.points} observações)")
     lines.append(f"🏪 {e(r.store or 'Loja não informada')}")
     if r.coupon:
         lines.append(f"🎟️ Cupom: <code>{e(r.coupon)}</code>")
@@ -48,12 +55,13 @@ def format_offer(offer: StoredOffer, decision: Decision) -> str:
         lines.append(f"👍 {r.votes or 0} likes · 🔥 {r.temperature or 0:.0f}")
     if v:
         lines.append("")
-        lines.append(f"⭐ Nota <b>{v.score}</b>/100 — {e(v.reason)}")
+        lines.append(f"⭐ Nota <b>{v.score}</b>/100")
+        lines.append(f"🤖 <i>Claude: {e(v.reason[:200])}</i>")
         if v.flags:
             lines.append(f"🚩 {e(', '.join(f.replace('_', ' ') for f in v.flags))}")
     if decision.insufficient_history:
         lines.append("")
-        lines.append("⚠️ <i>Histórico insuficiente: baseado no desconto declarado e na comunidade.</i>")
+        lines.append("⚠️ <i>Histórico insuficiente: baseado no desconto declarado (e na comunidade, se houver).</i>")
     lines.append("")
     lines.append(f"<i>via {e(r.source.capitalize())}</i>")
     return "\n".join(lines)

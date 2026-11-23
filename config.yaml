@@ -54,13 +54,16 @@ criteria:
   # Etapa 3: preço <= mediana dos últimos N dias * (1 - min_discount_vs_median)
   min_discount_vs_median: 0.25
   history_days: 90
-  min_history_points: 5
+  min_history_points: 5    # observações mínimas para usar a mediana
+  min_new_low_margin: 0.01 # "menor preço já registrado" = ao menos 1% abaixo do mínimo
   min_score: 80            # nota mínima do Claude (etapa 2)
   # Dedupe: não reenviar o mesmo produto em N horas, a menos que caia mais X%
   resend_window_hours: 72
   resend_min_drop: 0.05
-  # Sem histórico suficiente: desconto declarado E sinal da comunidade
+  # Sem histórico suficiente: desconto declarado >= alone, OU
+  # desconto declarado >= min_declared_discount E sinal da comunidade
   fallback:
+    min_declared_discount_alone: 0.40
     min_declared_discount: 0.30
     min_votes: 15          # likes (Promobit)
     min_temperature: 300   # engajamento (Promobit)

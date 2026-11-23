@@ -6,7 +6,7 @@ import logging
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from ofertas import criteria
@@ -14,6 +14,7 @@ from ofertas.config import Config
 from ofertas.dedupe import is_duplicate
 from ofertas.http import BlockedError, PoliteClient
 from ofertas.models import Decision, RawOffer, StoredOffer
+from ofertas.normalize import product_key
 from ofertas.notify import format_offer
 from ofertas.sources import REGISTRY
 from ofertas.storage import Storage, utcnow
@@ -120,11 +121,11 @@ def judge(
     categories = storage.get_setting("categories")
     enabled = categories.split(",") if categories else cfg.get("categories.enabled")
 
-    need = [off for off, d in pre if d.ok and storage.get_verdict(off.id, off.raw.price) is None]
+    need = [(off, d) for off, d in pre if d.ok and storage.get_verdict(off.id, off.raw.price) is None]
     if need and triage is not None:
-        fresh = triage.judge(need)
+        fresh = triage.judge([o for o, _ in need], stats={o.id: d.stats for o, d in need})
         with _tx(storage):
-            for off in need:
+            for off, _ in need:
                 if off.id in fresh:
                     storage.save_verdict(off.id, off.raw.price, fresh[off.id])
     out = []
@@ -161,13 +162,15 @@ def run(
     ccfg, scfg = cfg.get("criteria"), cfg.get("stores")
     pre: list[tuple[StoredOffer, Decision]] = []
     seen_keys: set[str] = set()
+    since = now - timedelta(days=ccfg.get("history_days", 90))
     for off in stored:
         dup, why = is_duplicate(
             storage, off, ccfg["resend_window_hours"], ccfg["resend_min_drop"], now
         )
         if not dup and off.product_key in seen_keys:
             dup, why = True, "repetida em outra fonte nesta execução"
-        d = criteria.objective(off.raw, ccfg, scfg, duplicate_reason=why)
+        history = storage.price_history(off.product_key, since, before=now)
+        d = criteria.objective(off.raw, ccfg, scfg, duplicate_reason=why, history=history)
         if d.ok:
             seen_keys.add(off.product_key)
         pre.append((off, d))
@@ -182,7 +185,16 @@ def run(
     if storage.get_setting("paused") == "1" and not dry_run:
         log.info("paused_skip_send", extra={"would_send": len(passing)})
         passing = []
-    for off, decision in passing[:cap]:
+    sent_names: set[str] = set()
+    for off, decision in passing:
+        if len(report.sent) >= cap:
+            break
+        # Same product posted several times with different titles: Claude's
+        # normalised name catches what the title-based product_key misses.
+        name = product_key(decision.verdict.name_norm) if decision.verdict else off.product_key
+        if name in sent_names:
+            continue
+        sent_names.add(name)
         try:
             msg_id = notifier.send_offer(off, decision)
         except Exception as exc:

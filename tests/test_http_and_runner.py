@@ -190,3 +190,46 @@ def test_no_triage_leaves_offer_pending(cfg):
     cfg, db, tg = claude_cfg(cfg), Storage(":memory:"), FakeTelegram()
     rep = run(cfg, client_for(ROUTES_OK), db, tg, triage=None)
     assert tg.offers == [] and sum(d.pending for _, d in rep.evaluated) == 1
+
+
+def test_history_built_across_runs_triggers_on_price_drop(cfg):
+    """Gatry has no 'de' price: only our own history can make it pass."""
+    from datetime import datetime, timedelta, timezone
+
+    cfg.data["criteria"].update({"min_history_points": 3, "history_days": 90,
+                                 "min_discount_vs_median": 0.25})
+    page = fixture_text("gatry_promocoes.html")
+    db, tg = Storage(":memory:"), FakeTelegram()
+    t0 = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    routes = dict(ROUTES_OK)
+    routes["https://gatry.com/promocoes"] = html(page)
+    for day in range(4):  # 4 daily observations at R$ 899
+        run(cfg, client_for(routes), db, tg, now=t0 + timedelta(days=day))
+    assert not any(o.raw.source == "gatry" for o in tg.offers)
+
+    routes["https://gatry.com/promocoes"] = html(page.replace("R$ 899,00", "R$ 599,00"))
+    rep = run(cfg, client_for(routes), db, tg, now=t0 + timedelta(days=5))
+    sent = [o for o in rep.sent if o.raw.source == "gatry"]
+    assert [o.raw.title[:15] for o in sent] == ["Monitor Samsung"]
+    (_, d), = [(o, d) for o, d in rep.evaluated if o.id == sent[0].id]
+    assert d.stats.median == 899.0 and not d.insufficient_history
+
+
+def test_same_product_different_titles_sent_once(cfg):
+    """Three posts of one TV, different titles: Claude's name_norm merges them."""
+    cfg = claude_cfg(cfg)
+    page = promobit_with(offerLikes=40)
+    # Make a second offer identical in price/discount but with another title.
+    data_start = page.index('application/json">') + len('application/json">')
+    data = json.loads(page[data_start:page.index("</script>", data_start)])
+    offers = data["props"]["pageProps"]["serverOffers"]["offers"]
+    fan = next(o for o in offers if o["offerId"] == 3242903)
+    twin = dict(fan, offerId=999, offerTitle="Ventilador Mesa Mondial 30 cm 110 V", offerSlug="x-999")
+    offers.append(twin)
+    page = page[:data_start] + json.dumps(data) + page[page.index("</script>", data_start):]
+    routes = dict(ROUTES_OK)
+    routes["https://www.promobit.com.br/promocoes/recentes/"] = html(page)
+    db, tg = Storage(":memory:"), FakeTelegram()
+    tri = Triage(CountingCLI(score=90), db, daily_limit=10, today=lambda: date(2026, 11, 23))
+    run(cfg, client_for(routes), db, tg, triage=tri)
+    assert len(tg.offers) == 1

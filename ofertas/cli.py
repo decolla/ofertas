@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import logging
+import statistics
 import sys
 from datetime import date
 from pathlib import Path
@@ -116,6 +117,59 @@ def cmd_status(cfg, args) -> int:
     return 0
 
 
+def cmd_report(cfg, args) -> int:
+    """Calibration: how many offers would pass at each threshold."""
+    db = Storage(cfg.path("database"))
+    days = args.days
+    since = f"-{days} days"
+    print(f"=== Últimos {days} dias ===")
+    n = db.conn.execute(
+        "SELECT COUNT(DISTINCT product_key) FROM offers WHERE last_seen >= datetime('now', ?)",
+        (since,),
+    ).fetchone()[0]
+    print(f"Produtos vistos: {n}")
+
+    # Price vs. median of each product's history (lowest price seen in the window).
+    rows = db.conn.execute(
+        "SELECT product_key, price FROM price_history WHERE seen_at >= datetime('now', ?) "
+        "ORDER BY product_key, seen_at", (f"-{cfg.get('criteria.history_days', 90)} days",),
+    ).fetchall()
+    by_key: dict[str, list[float]] = {}
+    for r in rows:
+        by_key.setdefault(r["product_key"], []).append(r["price"])
+    min_pts = cfg.get("criteria.min_history_points", 5)
+    with_hist = {k: v for k, v in by_key.items() if len(v) > min_pts}
+    print(f"Produtos com histórico suficiente (>{min_pts} pontos): {len(with_hist)}")
+    if with_hist:
+        drops = [1 - min(v[min_pts:]) / statistics.median(v[:-1]) for v in with_hist.values()]
+        for t in (0.15, 0.20, 0.25, 0.30, 0.35):
+            print(f"  ≥{t:.0%} abaixo da mediana: {sum(d >= t for d in drops)}")
+
+    print("Desconto declarado (ofertas no período):")
+    for t in (0.30, 0.40, 0.50, 0.60):
+        c = db.conn.execute(
+            "SELECT COUNT(*) FROM offers WHERE last_seen >= datetime('now', ?) "
+            "AND list_price > 0 AND 1 - price / list_price >= ?", (since, t),
+        ).fetchone()[0]
+        print(f"  ≥{t:.0%}: {c}")
+
+    print("Notas do Claude:")
+    for t in (60, 70, 75, 80, 85, 90):
+        c = db.conn.execute(
+            "SELECT COUNT(*) FROM verdicts WHERE created_at >= datetime('now', ?) "
+            "AND score >= ? AND NOT is_fake", (since, t),
+        ).fetchone()[0]
+        print(f"  ≥{t} (não fake): {c}")
+
+    sent = db.conn.execute(
+        "SELECT substr(sent_at, 1, 10) d, COUNT(*) c FROM sent "
+        "WHERE sent_at >= datetime('now', ?) GROUP BY d ORDER BY d", (since,),
+    ).fetchall()
+    print("Enviadas por dia: " + (", ".join(f"{r['d']}: {r['c']}" for r in sent) or "nenhuma"))
+    db.close()
+    return 0
+
+
 def cmd_test_telegram(cfg, args) -> int:
     tg = _telegram(cfg)
     tg.send_text("🤖 Teste do monitor de ofertas: tudo certo por aqui!",
@@ -141,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--with-claude", action="store_true",
                    help="no dry-run, chama o Claude de verdade (conta no limite diário)")
     sub.add_parser("status", help="uso do Claude, saúde das fontes, contadores")
+    rp = sub.add_parser("report", help="calibração: quantas passariam em cada limiar")
+    rp.add_argument("--days", type=int, default=7)
     sub.add_parser("test-telegram", help="envia uma mensagem de teste")
     sub.add_parser("init-db", help="cria/migra o banco")
     args = p.parse_args(argv)
@@ -152,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     dry = getattr(args, "dry_run", False)
     setup_logging(cfg.path("log_file"), quiet=dry)
-    handlers = {"run": cmd_run, "status": cmd_status, "test-telegram": cmd_test_telegram, "init-db": cmd_init_db}
+    handlers = {"run": cmd_run, "status": cmd_status, "report": cmd_report, "test-telegram": cmd_test_telegram, "init-db": cmd_init_db}
     try:
         return handlers[args.cmd](cfg, args)
     except ConfigError as exc:

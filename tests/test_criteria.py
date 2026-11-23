@@ -51,3 +51,56 @@ def test_rejections_explain_why(kw, why):
 def test_duplicate_blocks():
     d = evaluate(offer(), CRIT, WL, duplicate_reason="já enviada")
     assert not d.ok and "já enviada" in d.reasons
+
+
+# -- stage 3: price history ------------------------------------------------
+from ofertas.criteria import price_stats  # noqa: E402
+
+HCRIT = {
+    "min_discount_vs_median": 0.25, "min_history_points": 5, "min_new_low_margin": 0.01,
+    "fallback": {"min_declared_discount_alone": 0.40, "min_declared_discount": 0.30,
+                 "min_votes": 15, "min_temperature": 300},
+}
+HIST = [100, 102, 98, 100, 101]  # median 100, min 98
+
+
+def test_price_stats():
+    s = price_stats(70, HIST)
+    assert (s.points, s.median, s.minimum) == (5, 100, 98)
+    assert s.discount_vs_median == 0.30 and s.is_new_low
+    assert price_stats(98, HIST).is_new_low is False  # equal to the minimum is not a new low
+    assert price_stats(10, []).points == 0
+
+
+@pytest.mark.parametrize("price,ok,why", [
+    (75, True, "25% abaixo da mediana"),
+    (96, True, "menor preço já registrado"),
+    (98, False, "só 2% abaixo da mediana"),
+    (120, False, "precisa 25%"),
+])
+def test_history_rule(price, ok, why):
+    d = evaluate(offer(price=price, list_price=None, votes=0, temperature=0), HCRIT, WL, history=HIST)
+    assert d.ok is ok and not d.insufficient_history
+    assert any(why in r for r in d.reasons), d.reasons
+
+
+def test_history_overrides_inflated_declared_discount():
+    # Declares 70% off, but it's the usual price we keep seeing: no.
+    d = evaluate(offer(price=100, list_price=333, votes=50), HCRIT, WL, history=HIST)
+    assert not d.ok
+
+
+def test_too_few_points_falls_back_and_is_flagged():
+    d = evaluate(offer(price=55, list_price=100, votes=0, temperature=0), HCRIT, WL, history=[100, 100])
+    assert d.ok and d.insufficient_history
+    assert "histórico insuficiente (2 pontos)" in d.reasons
+
+
+@pytest.mark.parametrize("kw,ok", [
+    ({"price": 60, "votes": 0, "temperature": 0}, True),   # 40% alone is enough
+    ({"price": 65, "votes": 0, "temperature": 0}, False),  # 35% needs community
+    ({"price": 65, "votes": 20}, True),                    # 35% + community
+    ({"price": 75, "votes": 500}, False),                  # 25%: never in fallback
+])
+def test_fallback_without_history(kw, ok):
+    assert evaluate(offer(list_price=100, **kw), HCRIT, WL, history=[]).ok is ok

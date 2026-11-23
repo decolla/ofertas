@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from ofertas.models import StoredOffer, Verdict
+from ofertas.models import PriceStats, StoredOffer, Verdict
 from ofertas.schema import validate
 from ofertas.storage import Storage
 
@@ -91,7 +91,10 @@ desconto declarado.
 costuma custar no Brasil. 90+: menor preço histórico ou quase isso, "preço de \
 banana"; 80-89: excelente, vale avisar; 60-79: promoção comum; <60: preço \
 normal ou ruim. Na dúvida, seja conservador. Penalize flags. Considere \
-likes/engajamento da comunidade como evidência, não como prova.
+likes/engajamento da comunidade como evidência, não como prova. our_history \
+(quando presente) são preços que NÓS observamos para esse produto em sites de \
+promoção nos últimos 90 dias: é o melhor dado de referência que você tem; \
+null = sem histórico ainda, use seu conhecimento de mercado.
 - reason: justificativa em português, no máximo 140 caracteres.
 
 Devolva exatamente um item por oferta recebida, com o mesmo id."""
@@ -147,28 +150,46 @@ class ClaudeCLI:
         return data
 
 
-def offer_payload(offer: StoredOffer) -> dict:
+def _clip(text: str | None, n: int) -> str | None:
+    """Untrusted user text: drop control chars and cap length (limits injection room)."""
+    if text is None:
+        return None
+    clean = "".join(ch for ch in text if ch.isprintable())
+    return clean[:n]
+
+
+def offer_payload(offer: StoredOffer, stats: PriceStats | None = None) -> dict:
     r = offer.raw
     disc = r.declared_discount
+    history = None
+    if stats and stats.points:
+        history = {
+            "observacoes": stats.points,
+            "mediana": stats.median,
+            "minimo": stats.minimum,
+            "abaixo_da_mediana_pct": round((stats.discount_vs_median or 0) * 100),
+        }
     return {
         "id": str(offer.id),
-        "title": r.title,
+        "title": _clip(r.title, 200),
         "price": r.price,
         "list_price": r.list_price,
         "declared_discount_pct": round(disc * 100) if disc else None,
-        "store": r.store,
-        "coupon": r.coupon,
+        "store": _clip(r.store, 60),
+        "coupon": _clip(r.coupon, 40),
         "free_shipping": True if r.free_shipping else None,  # false = unknown
         "likes": r.votes,
         "engagement": r.temperature,
-        "tags": r.extra.get("tags") or [],
+        "tags": [_clip(t, 30) for t in (r.extra.get("tags") or [])[:10]],
         "source": r.source,
+        "our_history": history,
     }
 
 
-def build_prompt(offers: list[StoredOffer]) -> str:
+def build_prompt(offers: list[StoredOffer], stats: dict | None = None) -> str:
+    stats = stats or {}
     return "Avalie estas ofertas:\n" + json.dumps(
-        [offer_payload(o) for o in offers], ensure_ascii=False, indent=1
+        [offer_payload(o, stats.get(o.id)) for o in offers], ensure_ascii=False, indent=1
     )
 
 
@@ -226,7 +247,7 @@ class Triage:
     def remaining(self) -> int:
         return max(0, self.daily_limit - self.usage.claude_calls(self.today()))
 
-    def judge(self, offers: list[StoredOffer]) -> dict[int, Verdict]:
+    def judge(self, offers: list[StoredOffer], stats: dict | None = None) -> dict[int, Verdict]:
         results: dict[int, Verdict] = {}
         for start in range(0, len(offers), self.batch_size):
             batch = offers[start:start + self.batch_size]
@@ -236,7 +257,7 @@ class Triage:
             day = self.today()
             self.usage.add_claude_call(day)  # count the attempt before spending it
             try:
-                data = self.cli(build_prompt(batch))
+                data = self.cli(build_prompt(batch, stats))
                 verdicts = parse_result(data, {str(o.id) for o in batch}, self.model)
             except TriageError as exc:
                 log.error("triage_failed", extra={"error": str(exc), "batch": len(batch)})

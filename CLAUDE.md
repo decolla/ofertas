@@ -23,15 +23,29 @@ systemd user timer (a cada 20 min).
    tratados como dados (o prompt manda ignorar instruções neles).
    - Só são enviadas ao Claude as ofertas que **passaram na fase objetiva**;
      vereditos ficam em cache por (oferta, preço) na tabela `verdicts`.
+   - O Claude recebe também `our_history` (observações, mediana, mínimo).
+   - Campos de usuário vão truncados e sem caracteres de controle (`_clip`);
+     a justificativa aparece na mensagem marcada como "🤖 Claude".
    - Lotes de `claude.batch_size` (20). Cada chamada conta em `usage` **antes**
      de ser feita; ao atingir `daily_call_limit` (100) para e avisa uma vez.
    - Custo medido: ~US$ 0,002 e ~13 s por lote de 5 ofertas.
 4. **Critério** — `ofertas/criteria.py`, funções puras em duas fases:
-   `objective()` (loja, dedupe, sinal de preço) e `with_verdict()` (nota ≥
-   `min_score`, não fake, não usado/recondicionado, categoria habilitada).
-   `condition: desconhecido` é aceito. Sem veredito → `pending` (⏳ no dry-run).
+   - `objective()`: loja permitida, dedupe e sinal de preço.
+     - Com histórico (≥ `min_history_points` observações em `history_days`):
+       preço ≤ mediana × (1 − `min_discount_vs_median`) **ou** novo menor preço
+       (≥ `min_new_low_margin` abaixo do mínimo). O histórico exclui a
+       observação da execução atual (`price_history(..., before=now)`).
+     - Sem histórico: desconto declarado ≥ `min_declared_discount_alone` (40%,
+       aprovado pelo usuário: não exige likes) **ou** ≥ `min_declared_discount`
+       (30%) com sinal da comunidade. Marca "histórico insuficiente".
+   - `with_verdict()`: nota ≥ `min_score`, não fake, não usado/recondicionado,
+     categoria habilitada. `condition: desconhecido` é aceito. Sem veredito →
+     `pending` (⏳ no dry-run). O Claude só pode **barrar**, nunca aprovar sozinho.
    O runner reavalia todas as ofertas listadas a cada execução (barato; o
    dedupe impede reenvio), para que uma oferta que esquenta depois tenha chance.
+   O histórico vem de preços vistos nos agregadores (já são "promoções"), então
+   a mediana é de preço promocional típico: 25% abaixo dela é bem raro.
+   `ofertas report --days 7` mostra quantas passariam em cada limiar.
 5. **Notificação** — `ofertas/notify.py`, HTTP direto na Bot API (sem
    python-telegram-bot). Chat privado único; comandos só do `TELEGRAM_CHAT_ID`.
 
@@ -73,11 +87,12 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/ofertas run --dry-run --with-claude  # idem, chamando o Claude
 .venv/bin/ofertas test-telegram          # manda mensagem de teste
 .venv/bin/ofertas status                 # uso do Claude hoje, saúde das fontes
+.venv/bin/ofertas report --days 7        # calibração dos limiares
 ```
 
 ## Entrega em etapas
 1. MVP: Promobit + Gatry, SQLite, dedupe, Telegram sem Claude. ✅ (critério
    provisório: desconto declarado + comunidade)
 2. Claude CLI: classificar, normalizar nome, detectar fake, nota 0-100. ✅
-3. Histórico de preços e critério estatístico (mediana 30-90d / menor preço).
+3. Histórico de preços e critério estatístico (mediana 30-90d / menor preço). ✅
 4. Mais fontes, comandos do bot, systemd, README de deploy.

@@ -197,12 +197,15 @@ class Storage:
             (pkey, store_norm, price, source, _iso(now)),
         )
 
-    def price_history(self, pkey: str, since: datetime) -> list[float]:
-        rows = self.conn.execute(
-            "SELECT price FROM price_history WHERE product_key = ? AND seen_at >= ?",
-            (pkey, _iso(since)),
-        ).fetchall()
-        return [r["price"] for r in rows]
+    def price_history(self, pkey: str, since: datetime, before: datetime | None = None) -> list[float]:
+        """Prices seen for a product in [since, before). `before` excludes the
+        current run's own observation from the baseline."""
+        sql = "SELECT price FROM price_history WHERE product_key = ? AND seen_at >= ?"
+        args: list = [pkey, _iso(since)]
+        if before is not None:
+            sql += " AND seen_at < ?"
+            args.append(_iso(before))
+        return [r["price"] for r in self.conn.execute(sql + " ORDER BY seen_at", args)]
 
     # -- sent / dedupe ----------------------------------------------------
     def last_sent(self, pkey: str, url_canon: str, since: datetime) -> sqlite3.Row | None:
