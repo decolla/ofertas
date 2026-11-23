@@ -1,0 +1,13 @@
+[Unit]
+Description=Monitor de ofertas: uma execução (coleta, triagem, aviso)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/.venv/bin/ofertas run
+# claude CLI fica em ~/.local/bin
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStartSec=15min
+Nice=10

@@ -233,6 +233,7 @@ class Triage:
         daily_limit: int,
         batch_size: int = 20,
         model: str = "haiku",
+        max_batches_per_run: int | None = None,
         on_limit=None,
         today=date.today,
     ):
@@ -240,6 +241,7 @@ class Triage:
         self.usage = usage
         self.daily_limit = daily_limit
         self.batch_size = batch_size
+        self.max_batches_per_run = max_batches_per_run
         self.model = model
         self.on_limit = on_limit  # callback(text) for the one-time Telegram alert
         self.today = today
@@ -249,6 +251,11 @@ class Triage:
 
     def judge(self, offers: list[StoredOffer], stats: dict | None = None) -> dict[int, Verdict]:
         results: dict[int, Verdict] = {}
+        if self.max_batches_per_run:
+            # Spread a backlog over several runs instead of one burst; the
+            # highest declared discounts go first.
+            offers = sorted(offers, key=lambda o: o.raw.declared_discount or 0, reverse=True)
+            offers = offers[: self.max_batches_per_run * self.batch_size]
         for start in range(0, len(offers), self.batch_size):
             batch = offers[start:start + self.batch_size]
             if self.remaining() <= 0:

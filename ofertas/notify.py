@@ -73,12 +73,18 @@ class Telegram:
         self._token = token
         self._client = httpx.Client(timeout=20, transport=transport)
 
-    def _call(self, method: str, payload: dict) -> dict:
-        resp = self._client.post(API.format(token=self._token, method=method), json=payload)
+    def call(self, method: str, payload: dict, timeout: float | None = None):
+        resp = self._client.post(
+            API.format(token=self._token, method=method), json=payload,
+            timeout=timeout or self._client.timeout,
+        )
         data = resp.json()
         if not data.get("ok"):
+            # Never include the URL (it carries the token) in errors/logs.
             raise RuntimeError(f"Telegram {method} falhou: {data.get('description')}")
         return data["result"]
+
+    _call = call
 
     def send_text(self, text: str, button: tuple[str, str] | None = None) -> int:
         payload: dict = {

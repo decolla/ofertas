@@ -24,12 +24,28 @@ def store_allowed(store: str | None, stores_cfg: dict) -> bool:
     return norm not in blocked
 
 
+def community_cfg(offer: RawOffer, fallback_cfg: dict) -> dict:
+    """Global community thresholds with per-source overrides (scales differ)."""
+    return {**fallback_cfg, **(fallback_cfg.get("per_source") or {}).get(offer.source, {})}
+
+
 def community_ok(offer: RawOffer, fallback_cfg: dict) -> bool:
-    votes_ok = offer.votes is not None and offer.votes >= fallback_cfg["min_votes"]
+    fb = community_cfg(offer, fallback_cfg)
+    votes_ok = (
+        offer.votes is not None and fb.get("min_votes") is not None
+        and offer.votes >= fb["min_votes"]
+    )
     temp_ok = (
-        offer.temperature is not None and offer.temperature >= fallback_cfg["min_temperature"]
+        offer.temperature is not None and fb.get("min_temperature") is not None
+        and offer.temperature >= fb["min_temperature"]
     )
     return votes_ok or temp_ok
+
+
+def community_alone(offer: RawOffer, fallback_cfg: dict) -> bool:
+    """A post so hot in the community that it deserves Claude's look on its own."""
+    alone = community_cfg(offer, fallback_cfg).get("min_temperature_alone")
+    return alone is not None and offer.temperature is not None and offer.temperature >= alone
 
 
 def price_stats(price: float, history: list[float], new_low_margin: float = 0.01) -> PriceStats:
@@ -91,6 +107,9 @@ def _fallback(offer: RawOffer, fb: dict, reasons: list[str], stats: PriceStats) 
     alone = fb.get("min_declared_discount_alone")
     if disc is not None and alone is not None and disc >= alone:
         reasons.append(f"desconto declarado {disc:.0%}")
+        return True
+    if community_alone(offer, fb):
+        reasons.append(f"comunidade muito quente: {offer.temperature:.0f}°")
         return True
     if disc is None or disc < fb["min_declared_discount"]:
         shown = f"{disc:.0%}" if disc is not None else "sem preço 'de'"

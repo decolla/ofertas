@@ -62,8 +62,38 @@ systemd user timer (a cada 20 min).
   preço antigo, cupom, likes, engajamento, tags (frete grátis), loja.
 - **Gatry** ✅ `/promocoes`: HTML SSR com título, preço, loja e link. Sem preço
   "de" nem votos → depende do nosso histórico de preços.
-- **Hardmob** ❌ desafio Cloudflare ("Just a moment...") até no RSS → fora.
-- **Pelando** (etapa 4) — `/recentes` tem SSR; investigar antes de implementar.
+- **Pelando** ✅ `/recentes`: atributo `props` da astro-island
+  `RecentsFeedContent` (formato Astro `[tipo, valor]`, ver `astro_decode`).
+  Sem preço "de"; temperatura em graus → limites próprios em
+  `criteria.fallback.per_source.pelando`. Posts `kind: coupon` são ignorados.
+- **KaBuM!** ✅ páginas de campanha `/ofertas/<slug>` (descobertas na home a
+  cada execução, até `max_campaigns`): `pageProps.dataOfferServer.data`. Preço
+  usado = `priceWithDiscount` (PIX). Open box/pré-venda/indisponível são
+  descartados; vendedor de marketplace vira loja "X (marketplace KaBuM!)". O
+  preço "de" da KaBuM! costuma ser inflado: quem filtra é o Claude/histórico.
+- **Fora** ❌: Hardmob, Terabyte (Cloudflare); Magalu, Pichau (403); Amazon
+  (Termos de Uso proíbem robôs); Mercado Livre (robots.txt bloqueia bots de IA).
+  As ofertas dessas lojas chegam pelos agregadores. O usuário quer cobertura
+  direta de Amazon e ML **só por API oficial**: Amazon Creators API (PA-API 5
+  foi desativada em 2026) e API do ML (busca `/sites/MLB/search` com 403
+  relatado; testar `/products/search`). Integrar só quando houver credenciais,
+  validando contra a API real.
+
+## Bot
+- `ofertas bot` (processo contínuo, `ofertas-bot.service`): long polling,
+  offset salvo em `settings.tg_offset`. `/pausar`, `/retomar`, `/categorias`
+  (botões inline), `/minimo [n]` (nota mínima), `/status`, `/ajuda`.
+- Estado em `settings` (`paused`, `categories`, `min_score`), lido pelo runner
+  a cada ciclo; sobrepõe o `config.yaml`.
+- `Telegram.call()` nunca loga a URL (contém o token); `httpx` fica em WARNING.
+
+## Deploy
+- `deploy/install.sh` renderiza `@ROOT@` nos units e instala em
+  `~/.config/systemd/user`: `ofertas.timer` (`OnCalendar=*:0/20`) →
+  `ofertas.service` (oneshot, PATH inclui `~/.local/bin` para o `claude`) e
+  `ofertas-bot.service` (Restart=always).
+- `claude.max_batches_per_run` (3) dilui backlogs grandes (ex.: 1ª execução
+  com a KaBuM!) em várias execuções, maiores descontos primeiro.
 
 ## Convenções
 - Código, identificadores e logs em inglês; **mensagens do bot em PT-BR**.
@@ -88,6 +118,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/ofertas test-telegram          # manda mensagem de teste
 .venv/bin/ofertas status                 # uso do Claude hoje, saúde das fontes
 .venv/bin/ofertas report --days 7        # calibração dos limiares
+.venv/bin/ofertas bot                    # comandos do Telegram (o systemd roda isso)
+./deploy/install.sh                      # instala/liga timer + bot no systemd
 ```
 
 ## Entrega em etapas
@@ -95,4 +127,4 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
    provisório: desconto declarado + comunidade)
 2. Claude CLI: classificar, normalizar nome, detectar fake, nota 0-100. ✅
 3. Histórico de preços e critério estatístico (mediana 30-90d / menor preço). ✅
-4. Mais fontes, comandos do bot, systemd, README de deploy.
+4. Mais fontes, comandos do bot, systemd, README de deploy. ✅ (Pelando, KaBuM!)

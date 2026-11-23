@@ -51,3 +51,52 @@ class TestGatry:
     def test_layout_change_raises(self):
         with pytest.raises(ValueError, match="layout"):
             GatrySource.parse("<ul><li><span>algo novo</span></li></ul>")
+
+
+from ofertas.sources.kabum import KabumSource, campaign_paths  # noqa: E402
+from ofertas.sources.pelando import PelandoSource, astro_decode  # noqa: E402
+
+
+class TestPelando:
+    def test_astro_decode(self):
+        assert astro_decode([0, 5]) == 5
+        assert astro_decode([1, [[0, "a"], [0, {"x": [0, 1]}]]]) == ["a", {"x": 1}]
+        assert astro_decode({"s": [0, {"name": [0, "Amazon"]}]}) == {"s": {"name": "Amazon"}}
+
+    def test_parses_promotions_skips_coupons(self):
+        offers = PelandoSource.parse(fixture_text("pelando_recentes.html"))
+        assert len(offers) == 10  # 12 deals in the fixture, 2 are coupons
+        vonixx = offers[0]
+        assert vonixx.title == "Vonixx RESTAURAX 500ML Proteção UV Toque Seco"
+        assert vonixx.price == 36.26 and vonixx.store == "Amazon"
+        assert vonixx.temperature == 5 and vonixx.list_price is None
+        assert vonixx.url == "https://www.pelando.com.br/d/vonixx-restaurax-500ml-protecao-uv-toque-seco-1f1f"
+
+    def test_missing_island_raises(self):
+        with pytest.raises(ValueError, match="layout"):
+            PelandoSource.parse("<html></html>")
+
+
+class TestKabum:
+    def test_campaign_discovery(self):
+        paths = campaign_paths(fixture_text("kabum_home.html"), limit=5)
+        assert paths == ["/ofertas/agoraoununca", "/ofertas/esquentablackdasblacks"]
+        assert campaign_paths(fixture_text("kabum_home.html"), limit=1) == ["/ofertas/agoraoununca"]
+
+    def test_parses_campaign_products(self):
+        offers = KabumSource.parse(fixture_text("kabum_oferta.html"))
+        assert len(offers) == 12
+        psu = next(o for o in offers if o.source_id == "907603")
+        assert psu.title.startswith("Fonte Gigabyte UD1000GM PG5 V2, 1000W")
+        assert psu.price == 649.99 and psu.list_price == 1111.1
+        assert psu.store == "KaBuM!" and psu.free_shipping is True
+        assert psu.url.startswith("https://www.kabum.com.br/produto/907603/fonte-gigabyte")
+        assert "Preço no PIX" in psu.extra["tags"]
+
+    def test_skips_openbox_unavailable_and_labels_marketplace(self):
+        page = fixture_text("kabum_oferta.html")
+        page = page.replace('"openbox": false', '"openbox": true', 1)
+        page = page.replace('"sellerName": "KaBuM!"', '"sellerName": "Loja X"', 2)
+        offers = {o.source_id: o for o in KabumSource.parse(page)}
+        assert "907603" not in offers  # first product is now open box
+        assert offers["592292"].store == "Loja X (marketplace KaBuM!)"

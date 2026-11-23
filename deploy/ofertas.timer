@@ -1,0 +1,10 @@
+[Unit]
+Description=Monitor de ofertas a cada 20 minutos
+
+[Timer]
+OnCalendar=*:0/20
+RandomizedDelaySec=90
+Persistent=true
+
+[Install]
+WantedBy=timers.target

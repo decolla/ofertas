@@ -104,3 +104,24 @@ def test_too_few_points_falls_back_and_is_flagged():
 ])
 def test_fallback_without_history(kw, ok):
     assert evaluate(offer(list_price=100, **kw), HCRIT, WL, history=[]).ok is ok
+
+
+PCRIT = {**HCRIT, "fallback": {**HCRIT["fallback"], "per_source": {
+    "pelando": {"min_votes": None, "min_temperature": 150, "min_temperature_alone": 400}}}}
+
+
+@pytest.mark.parametrize("temp,list_price,ok", [
+    (450, None, True),    # very hot, no "de" price: goes on to Claude
+    (200, None, False),   # warm but no declared discount
+    (200, 100, True),     # 35% + community (pelando scale)
+    (120, 100, False),    # 35% but not hot enough for pelando
+])
+def test_pelando_community_scale(temp, list_price, ok):
+    o = offer(source="pelando", price=65, list_price=list_price, votes=None, temperature=temp)
+    assert evaluate(o, PCRIT, WL, history=[]).ok is ok
+
+
+def test_per_source_override_does_not_leak():
+    # promobit keeps the global 300 engagement scale
+    o = offer(price=65, list_price=100, votes=0, temperature=200)
+    assert evaluate(o, PCRIT, WL, history=[]).ok is False

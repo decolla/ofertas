@@ -1,0 +1,14 @@
+[Unit]
+Description=Monitor de ofertas: comandos do Telegram (/pausar, /categorias, /minimo)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/.venv/bin/ofertas bot
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target

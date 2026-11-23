@@ -11,6 +11,8 @@ from typing import Protocol
 
 from ofertas import criteria
 from ofertas.config import Config
+from ofertas.bot import enabled_categories
+from ofertas.bot import min_score as bot_min_score
 from ofertas.dedupe import is_duplicate
 from ofertas.http import BlockedError, PoliteClient
 from ofertas.models import Decision, RawOffer, StoredOffer
@@ -87,7 +89,8 @@ def collect(
             log.error("unknown_source", extra={"source": name})
             continue
         try:
-            got = cls(client, scfg["urls"]).fetch()
+            opts = {k: v for k, v in scfg.items() if k not in ("enabled", "urls")}
+            got = cls(client, scfg["urls"], **opts).fetch()
         except Exception as exc:  # isolate: one broken source never stops the others
             kind = "blocked" if isinstance(exc, BlockedError) else "error"
             log.warning("source_failed", extra={"source": name, "kind": kind, "error": str(exc)})
@@ -117,9 +120,8 @@ def judge(
     """Phase 2: attach Claude verdicts (cached per offer+price) to objective passes."""
     if not cfg.get("claude.enabled", False):
         return pre
-    min_score = cfg.get("criteria.min_score", 80)
-    categories = storage.get_setting("categories")
-    enabled = categories.split(",") if categories else cfg.get("categories.enabled")
+    min_score = bot_min_score(cfg, storage)  # /minimo overrides config
+    enabled = enabled_categories(cfg, storage)  # /categorias overrides config
 
     need = [(off, d) for off, d in pre if d.ok and storage.get_verdict(off.id, off.raw.price) is None]
     if need and triage is not None:

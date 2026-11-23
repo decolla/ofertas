@@ -21,6 +21,19 @@ sources:
     enabled: true
     urls:
       - https://gatry.com/promocoes
+  pelando:
+    enabled: true
+    urls:
+      - https://www.pelando.com.br/recentes
+  kabum:
+    enabled: true
+    max_campaigns: 3       # campanhas /ofertas/<slug> descobertas na home
+    urls:
+      - https://www.kabum.com.br/   # 1ª URL = home, usada só para descobrir campanhas
+  # Fora por decisão (verificado em 2026-11-23): Hardmob, Terabyte e Magalu
+  # bloqueiam robôs (Cloudflare/403); Pichau 403; Amazon proíbe robôs nos
+  # Termos de Uso; Mercado Livre bloqueia bots de IA no robots.txt. As ofertas
+  # dessas lojas chegam pelos agregadores. APIs oficiais: ver README.
 
 # Categorias monitoradas (a classificação vem do Claude na etapa 2;
 # até lá ofertas sem categoria não são filtradas por aqui).
@@ -67,6 +80,11 @@ criteria:
     min_declared_discount: 0.30
     min_votes: 15          # likes (Promobit)
     min_temperature: 300   # engajamento (Promobit)
+    per_source:            # escalas de comunidade diferem por fonte
+      pelando:
+        min_votes: null
+        min_temperature: 150       # graus do Pelando
+        min_temperature_alone: 400 # tão quente que vai ao Claude mesmo sem preço "de"
   max_notifications_per_run: 5
 
 claude:
@@ -74,6 +92,7 @@ claude:
   command: claude
   model: haiku
   batch_size: 20
+  max_batches_per_run: 3   # backlog grande (1ª execução) é diluído em várias execuções
   timeout_seconds: 180
   daily_call_limit: 100
 

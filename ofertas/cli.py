@@ -68,7 +68,8 @@ def _triage(cfg, usage: Storage, notifier) -> Triage | None:
             log.error("alert_send_failed", extra={"error": str(exc)})
 
     return Triage(cli, usage, daily_limit=cfg.get("claude.daily_call_limit", 100),
-                  batch_size=cfg.get("claude.batch_size", 20), model=model, on_limit=alert)
+                  batch_size=cfg.get("claude.batch_size", 20), model=model, on_limit=alert,
+                  max_batches_per_run=cfg.get("claude.max_batches_per_run", 3))
 
 
 def cmd_run(cfg, args) -> int:
@@ -178,6 +179,13 @@ def cmd_test_telegram(cfg, args) -> int:
     return 0
 
 
+def cmd_bot(cfg, args) -> int:
+    from ofertas.bot import run_bot
+
+    run_bot(cfg, Storage(cfg.path("database")), _telegram(cfg))
+    return 0
+
+
 def cmd_init_db(cfg, args) -> int:
     Storage(cfg.path("database")).close()
     print(f"Banco pronto em {cfg.path('database')}")
@@ -199,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     rp.add_argument("--days", type=int, default=7)
     sub.add_parser("test-telegram", help="envia uma mensagem de teste")
     sub.add_parser("init-db", help="cria/migra o banco")
+    sub.add_parser("bot", help="atende os comandos do Telegram (processo contínuo)")
     args = p.parse_args(argv)
 
     try:
@@ -208,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     dry = getattr(args, "dry_run", False)
     setup_logging(cfg.path("log_file"), quiet=dry)
-    handlers = {"run": cmd_run, "status": cmd_status, "report": cmd_report, "test-telegram": cmd_test_telegram, "init-db": cmd_init_db}
+    handlers = {"run": cmd_run, "status": cmd_status, "report": cmd_report, "bot": cmd_bot, "test-telegram": cmd_test_telegram, "init-db": cmd_init_db}
     try:
         return handlers[args.cmd](cfg, args)
     except ConfigError as exc:
