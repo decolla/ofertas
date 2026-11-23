@@ -1,0 +1,74 @@
+# Configuração do monitor de ofertas. Segredos ficam no .env, não aqui.
+
+user_agent: "OfertasBot/0.1 (monitor pessoal de ofertas, uso nao comercial; respeita robots.txt)"
+database: data/ofertas.db
+lock_file: data/ofertas.lock
+log_file: logs/ofertas.log
+
+http:
+  timeout_seconds: 20
+  retries: 3              # tentativas extras em erro de rede/5xx
+  backoff_base_seconds: 2 # espera 2, 4, 8...
+  min_interval_per_host_seconds: 5
+
+sources:
+  promobit:
+    enabled: true
+    urls:
+      - https://www.promobit.com.br/promocoes/recentes/
+      - https://www.promobit.com.br/
+  gatry:
+    enabled: true
+    urls:
+      - https://gatry.com/promocoes
+
+# Categorias monitoradas (a classificação vem do Claude na etapa 2;
+# até lá ofertas sem categoria não são filtradas por aqui).
+categories:
+  enabled: [hardware, eletronicos, casa, consumo, cozinha, jogos_tabuleiro]
+
+stores:
+  mode: whitelist   # whitelist: só as listadas | blacklist: todas menos as listadas
+  whitelist:
+    - Amazon
+    - Mercado Livre
+    - Magazine Luiza
+    - Magalu
+    - KaBuM!
+    - Kabum
+    - Pichau
+    - Terabyte
+    - TerabyteShop
+    - Samsung
+    - Casas Bahia
+    - Ponto
+    - Fast Shop
+    - Carrefour
+    - Leroy Merlin
+    - Netshoes
+    - Americanas
+    - Submarino
+  blacklist: []
+
+criteria:
+  # Etapa 3: preço <= mediana dos últimos N dias * (1 - min_discount_vs_median)
+  min_discount_vs_median: 0.25
+  history_days: 90
+  min_history_points: 5
+  min_score: 80            # nota mínima do Claude (etapa 2)
+  # Dedupe: não reenviar o mesmo produto em N horas, a menos que caia mais X%
+  resend_window_hours: 72
+  resend_min_drop: 0.05
+  # Sem histórico suficiente: desconto declarado E sinal da comunidade
+  fallback:
+    min_declared_discount: 0.30
+    min_votes: 15          # likes (Promobit)
+    min_temperature: 300   # engajamento (Promobit)
+  max_notifications_per_run: 5
+
+claude:
+  enabled: false           # ligado na etapa 2
+  daily_call_limit: 100
+
+health:
+  alert_after_failures: 5  # falhas seguidas de uma fonte antes de avisar no Telegram

@@ -1,0 +1,262 @@
+"""SQLite persistence (stdlib sqlite3). Schema migrations via PRAGMA user_version."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from ofertas.models import RawOffer, StoredOffer
+from ofertas.normalize import canonical_url, normalize_store, normalize_title, product_key
+
+MIGRATIONS: list[str] = [
+    # v1
+    """
+    CREATE TABLE offers (
+        id INTEGER PRIMARY KEY,
+        source TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        url TEXT NOT NULL,
+        url_canon TEXT NOT NULL,
+        product_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        title_norm TEXT NOT NULL,
+        category TEXT,
+        price REAL NOT NULL,
+        list_price REAL,
+        store TEXT,
+        store_norm TEXT,
+        coupon TEXT,
+        free_shipping INTEGER,
+        votes INTEGER,
+        temperature REAL,
+        first_seen TEXT NOT NULL,
+        last_seen TEXT NOT NULL,
+        raw_json TEXT NOT NULL,
+        UNIQUE (source, source_id)
+    );
+    CREATE INDEX offers_product ON offers (product_key);
+
+    CREATE TABLE price_history (
+        id INTEGER PRIMARY KEY,
+        product_key TEXT NOT NULL,
+        store_norm TEXT,
+        price REAL NOT NULL,
+        source TEXT NOT NULL,
+        seen_at TEXT NOT NULL
+    );
+    CREATE INDEX price_history_product ON price_history (product_key, seen_at);
+
+    CREATE TABLE sent (
+        id INTEGER PRIMARY KEY,
+        offer_id INTEGER NOT NULL REFERENCES offers(id),
+        product_key TEXT NOT NULL,
+        url_canon TEXT NOT NULL,
+        price REAL NOT NULL,
+        sent_at TEXT NOT NULL,
+        message_id INTEGER
+    );
+    CREATE INDEX sent_product ON sent (product_key, sent_at);
+    CREATE INDEX sent_url ON sent (url_canon, sent_at);
+
+    CREATE TABLE verdicts (
+        id INTEGER PRIMARY KEY,
+        offer_id INTEGER NOT NULL REFERENCES offers(id),
+        price REAL NOT NULL,
+        score INTEGER,
+        is_fake INTEGER,
+        flags_json TEXT,
+        category TEXT,
+        name_norm TEXT,
+        reason TEXT,
+        model TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (offer_id, price)
+    );
+
+    CREATE TABLE usage (
+        day TEXT PRIMARY KEY,
+        claude_calls INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL NOT NULL DEFAULT 0,
+        limit_alerted INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE source_health (
+        source TEXT PRIMARY KEY,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        last_ok TEXT,
+        alerted INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """,
+]
+
+# A new price-history point is recorded when the price changes, or at most
+# once per this interval when it stays the same (keeps the median honest
+# without one row per 20-minute run).
+HISTORY_REFRESH = timedelta(hours=24)
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+class Storage:
+    def __init__(self, path: Path | str):
+        if str(path) != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(str(path), isolation_level=None, timeout=30)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("PRAGMA journal_mode = WAL")
+        self.migrate()
+
+    def close(self) -> None:
+        self.conn.close()
+
+    # -- schema / transactions -------------------------------------------
+    def migrate(self) -> None:
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        for i, sql in enumerate(MIGRATIONS[version:], start=version + 1):
+            self.conn.executescript(f"BEGIN; {sql}; PRAGMA user_version = {i}; COMMIT;")
+
+    def begin(self) -> None:
+        self.conn.execute("BEGIN")
+
+    def commit(self) -> None:
+        self.conn.execute("COMMIT")
+
+    def rollback(self) -> None:
+        self.conn.execute("ROLLBACK")
+
+    # -- offers -----------------------------------------------------------
+    def upsert_offer(self, raw: RawOffer, now: datetime | None = None) -> StoredOffer:
+        now_s = _iso(now or utcnow())
+        url_canon = canonical_url(raw.url)
+        pkey = product_key(raw.title)
+        store_norm = normalize_store(raw.store)
+        row = self.conn.execute(
+            "SELECT id, price, category FROM offers WHERE source = ? AND source_id = ?",
+            (raw.source, raw.source_id),
+        ).fetchone()
+        fields = dict(
+            url=raw.url, url_canon=url_canon, product_key=pkey, title=raw.title,
+            title_norm=normalize_title(raw.title), price=raw.price,
+            list_price=raw.list_price, store=raw.store, store_norm=store_norm,
+            coupon=raw.coupon,
+            free_shipping=None if raw.free_shipping is None else int(raw.free_shipping),
+            votes=raw.votes, temperature=raw.temperature, last_seen=now_s,
+            raw_json=json.dumps(asdict(raw), ensure_ascii=False),
+        )
+        if row is None:
+            cols = ["source", "source_id", "first_seen", *fields]
+            vals = [raw.source, raw.source_id, now_s, *fields.values()]
+            cur = self.conn.execute(
+                f"INSERT INTO offers ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                vals,
+            )
+            offer_id, is_new, changed, category = cur.lastrowid, True, True, None
+        else:
+            sets = ", ".join(f"{k} = ?" for k in fields)
+            self.conn.execute(
+                f"UPDATE offers SET {sets} WHERE id = ?", [*fields.values(), row["id"]]
+            )
+            offer_id, is_new = row["id"], False
+            changed, category = abs(row["price"] - raw.price) >= 0.01, row["category"]
+        self._record_price(pkey, store_norm, raw.price, raw.source, now or utcnow())
+        return StoredOffer(
+            id=offer_id, raw=raw, url_canon=url_canon, product_key=pkey,
+            is_new=is_new, price_changed=changed, category=category,
+        )
+
+    def _record_price(self, pkey, store_norm, price, source, now: datetime) -> None:
+        last = self.conn.execute(
+            "SELECT price, seen_at FROM price_history WHERE product_key = ? "
+            "AND store_norm IS ? ORDER BY seen_at DESC LIMIT 1",
+            (pkey, store_norm),
+        ).fetchone()
+        if last and abs(last["price"] - price) < 0.01:
+            if now - datetime.fromisoformat(last["seen_at"]) < HISTORY_REFRESH:
+                return
+        self.conn.execute(
+            "INSERT INTO price_history (product_key, store_norm, price, source, seen_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (pkey, store_norm, price, source, _iso(now)),
+        )
+
+    def price_history(self, pkey: str, since: datetime) -> list[float]:
+        rows = self.conn.execute(
+            "SELECT price FROM price_history WHERE product_key = ? AND seen_at >= ?",
+            (pkey, _iso(since)),
+        ).fetchall()
+        return [r["price"] for r in rows]
+
+    # -- sent / dedupe ----------------------------------------------------
+    def last_sent(self, pkey: str, url_canon: str, since: datetime) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT price, sent_at FROM sent WHERE (product_key = ? OR url_canon = ?) "
+            "AND sent_at >= ? ORDER BY price ASC LIMIT 1",
+            (pkey, url_canon, _iso(since)),
+        ).fetchone()
+
+    def mark_sent(self, offer: StoredOffer, message_id: int | None, now: datetime | None = None):
+        self.conn.execute(
+            "INSERT INTO sent (offer_id, product_key, url_canon, price, sent_at, message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (offer.id, offer.product_key, offer.url_canon, offer.raw.price,
+             _iso(now or utcnow()), message_id),
+        )
+
+    # -- source health ----------------------------------------------------
+    def source_ok(self, source: str, now: datetime | None = None) -> bool:
+        """Returns True if the source was previously alerted as failing (recovered)."""
+        row = self.conn.execute(
+            "SELECT alerted FROM source_health WHERE source = ?", (source,)
+        ).fetchone()
+        self.conn.execute(
+            "INSERT INTO source_health (source, consecutive_failures, last_ok, alerted) "
+            "VALUES (?, 0, ?, 0) ON CONFLICT(source) DO UPDATE SET "
+            "consecutive_failures = 0, last_ok = excluded.last_ok, alerted = 0",
+            (source, _iso(now or utcnow())),
+        )
+        return bool(row and row["alerted"])
+
+    def source_failed(self, source: str, error: str) -> tuple[int, bool]:
+        """Returns (consecutive_failures, already_alerted)."""
+        self.conn.execute(
+            "INSERT INTO source_health (source, consecutive_failures, last_error) "
+            "VALUES (?, 1, ?) ON CONFLICT(source) DO UPDATE SET "
+            "consecutive_failures = consecutive_failures + 1, last_error = excluded.last_error",
+            (source, error[:500]),
+        )
+        row = self.conn.execute(
+            "SELECT consecutive_failures, alerted FROM source_health WHERE source = ?",
+            (source,),
+        ).fetchone()
+        return row["consecutive_failures"], bool(row["alerted"])
+
+    def source_alerted(self, source: str) -> None:
+        self.conn.execute("UPDATE source_health SET alerted = 1 WHERE source = ?", (source,))
+
+    # -- settings ---------------------------------------------------------
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
