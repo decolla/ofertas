@@ -2,8 +2,11 @@
 register it here and add a block under `sources:` in config.yaml."""
 
 from ofertas.sources.base import Source
+from ofertas.sources.comparajogos import ComparajogosSource
 from ofertas.sources.gatry import GatrySource
 from ofertas.sources.kabum import KabumSource
+from ofertas.sources.ofertaesperta import OfertaEspertaSource
+from ofertas.sources.pechinchou import PechinchouSource
 from ofertas.sources.pelando import PelandoSource
 from ofertas.sources.promobit import PromobitSource
 
@@ -12,6 +15,9 @@ REGISTRY: dict[str, type[Source]] = {
     GatrySource.name: GatrySource,
     PelandoSource.name: PelandoSource,
     KabumSource.name: KabumSource,
+    PechinchouSource.name: PechinchouSource,
+    OfertaEspertaSource.name: OfertaEspertaSource,
+    ComparajogosSource.name: ComparajogosSource,
 }
 
 __all__ = ["REGISTRY", "Source"]

@@ -16,7 +16,7 @@ from ofertas.bot import min_score as bot_min_score
 from ofertas.dedupe import is_duplicate
 from ofertas.http import BlockedError, PoliteClient
 from ofertas.models import Decision, RawOffer, StoredOffer
-from ofertas.normalize import product_key
+from ofertas.normalize import normalize_store, product_key, same_family
 from ofertas.notify import format_offer
 from ofertas.sources import REGISTRY
 from ofertas.storage import Storage, utcnow
@@ -187,16 +187,31 @@ def run(
     if storage.get_setting("paused") == "1" and not dry_run:
         log.info("paused_skip_send", extra={"would_send": len(passing)})
         passing = []
+    window = now - timedelta(hours=ccfg["resend_window_hours"])
+    family = [(r["product_key"], r["store_norm"], r["price"]) for r in storage.recent_sent(window)]
+    heads: list[tuple[StoredOffer, Decision]] = []
     sent_names: set[str] = set()
     for off, decision in passing:
-        if len(report.sent) >= cap:
-            break
         # Same product posted several times with different titles: Claude's
         # normalised name catches what the title-based product_key misses.
         name = product_key(decision.verdict.name_norm) if decision.verdict else off.product_key
         if name in sent_names:
             continue
+        # Colour/model variants of one listing (KaBuM! lists each colour as a
+        # product): fold into the first one, here or sent in the dedupe window.
+        head = next((h for h in heads if _variant_of(off, h[0])), None)
+        if head is not None:
+            head[1].variants.append(off.raw.title)
+            continue
+        if any(_variant_row(off, *row) for row in family):
+            log.info("variant_skip", extra={"offer_id": off.id, "title": off.raw.title})
+            continue
         sent_names.add(name)
+        heads.append((off, decision))
+
+    for off, decision in heads:
+        if len(report.sent) >= cap:
+            break
         try:
             msg_id = notifier.send_offer(off, decision)
         except Exception as exc:
@@ -213,6 +228,21 @@ def run(
         "evaluated": len(report.evaluated), "sent": len(report.sent), "dry_run": dry_run,
     })
     return report
+
+
+VARIANT_PRICE_TOLERANCE = 0.03
+
+
+def _variant_row(off: StoredOffer, pkey: str, store_norm: str | None, price: float) -> bool:
+    if not store_norm or normalize_store(off.raw.store) != store_norm or pkey == off.product_key:
+        return False  # identical keys are the regular dedupe's job (price-drop rule)
+    if abs(off.raw.price - price) > price * VARIANT_PRICE_TOLERANCE:
+        return False
+    return same_family(off.product_key, pkey)
+
+
+def _variant_of(off: StoredOffer, other: StoredOffer) -> bool:
+    return _variant_row(off, other.product_key, normalize_store(other.raw.store), other.raw.price)
 
 
 def _esc(s: str) -> str:

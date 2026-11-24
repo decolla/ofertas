@@ -215,6 +215,14 @@ class Storage:
             (pkey, url_canon, _iso(since)),
         ).fetchone()
 
+    def recent_sent(self, since: datetime) -> list[sqlite3.Row]:
+        """Sent rows with the offer's store, for variant (same family) checks."""
+        return self.conn.execute(
+            "SELECT s.product_key, s.price, o.store_norm FROM sent s "
+            "LEFT JOIN offers o ON o.id = s.offer_id WHERE s.sent_at >= ?",
+            (_iso(since),),
+        ).fetchall()
+
     def mark_sent(self, offer: StoredOffer, message_id: int | None, now: datetime | None = None):
         self.conn.execute(
             "INSERT INTO sent (offer_id, product_key, url_canon, price, sent_at, message_id) "

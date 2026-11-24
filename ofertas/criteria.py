@@ -104,14 +104,15 @@ def _fallback(offer: RawOffer, fb: dict, reasons: list[str], stats: PriceStats) 
     reasons.append(f"histórico insuficiente ({stats.points} pontos)")
     disc = offer.declared_discount
     community = community_ok(offer, fb)
-    alone = fb.get("min_declared_discount_alone")
+    src = community_cfg(offer, fb)  # discount thresholds can be per source too
+    alone = src.get("min_declared_discount_alone")
     if disc is not None and alone is not None and disc >= alone:
         reasons.append(f"desconto declarado {disc:.0%}")
         return True
     if community_alone(offer, fb):
         reasons.append(f"comunidade muito quente: {offer.temperature:.0f}°")
         return True
-    if disc is None or disc < fb["min_declared_discount"]:
+    if disc is None or disc < src["min_declared_discount"]:
         shown = f"{disc:.0%}" if disc is not None else "sem preço 'de'"
         reasons.append(f"desconto declarado insuficiente ({shown})")
         return False

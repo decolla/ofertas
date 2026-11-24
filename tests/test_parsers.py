@@ -100,3 +100,79 @@ class TestKabum:
         offers = {o.source_id: o for o in KabumSource.parse(page)}
         assert "907603" not in offers  # first product is now open box
         assert offers["592292"].store == "Loja X (marketplace KaBuM!)"
+
+
+from ofertas.sources.promobit import photo_url  # noqa: E402
+
+
+@pytest.mark.parametrize("raw,url", [
+    ("/static/p/1.jpg", "https://www.promobit.com.br/static/p/1.jpg"),
+    ("https://www.promobit.com.br//static/p/2.png", "https://www.promobit.com.br/static/p/2.png"),
+    ("/8279.png", "https://i.promobit.com.br/8279.png"),  # image CDN
+    (None, None),
+])
+def test_promobit_photo_url(raw, url):
+    assert photo_url(raw) == url
+
+
+# -- stage 5: more aggregators ---------------------------------------------
+from ofertas.sources.comparajogos import ComparajogosSource  # noqa: E402
+from ofertas.sources.ofertaesperta import OfertaEspertaSource  # noqa: E402
+from ofertas.sources.pechinchou import PechinchouSource  # noqa: E402
+
+
+class TestPechinchou:
+    def test_parses_next_data(self):
+        offers = PechinchouSource.parse(fixture_text("pechinchou_recentes.html"))
+        assert len(offers) == 9  # 10 in the fixture, one "R$ 1,00 primeira compra" bait
+        phone = next(o for o in offers if o.source_id == "150178")
+        assert phone.price == 1039.99 and phone.list_price == 1249.9
+        assert phone.store == "Mercado Livre" and phone.coupon == "DESCONTOSMELI"
+        assert phone.url == "https://www.pechinchou.com.br/oferta/150178"
+        assert phone.free_shipping is True and phone.image.startswith("https://")
+        assert "Telefonia" in phone.extra["tags"]
+
+    def test_conditional_free_shipping_is_not_free(self):
+        offers = {o.source_id: o for o in PechinchouSource.parse(fixture_text("pechinchou_recentes.html"))}
+        assert offers["152389"].free_shipping is None  # "Frete Grátis assinantes Meli+"
+        assert "menor preço (Pechinchou)" in offers["152389"].extra["tags"]
+
+    def test_layout_change_raises(self):
+        with pytest.raises(ValueError, match="layout"):
+            PechinchouSource.parse('<script id="__NEXT_DATA__">{"props":{"pageProps":{}}}</script>')
+
+
+class TestOfertaEsperta:
+    def test_parses_rsc_payload(self):
+        offers = OfertaEspertaSource.parse(fixture_text("ofertaesperta_home.html"))
+        assert len(offers) == 10
+        phone = offers[0]
+        assert phone.price == 1619.10 and phone.list_price == 2699.0
+        assert phone.store == "Mercado Livre" and phone.coupon == "TECH2411"
+        assert phone.url.startswith("https://www.ofertaesperta.com/promocao/cmwup5vgc002olj0eo55qrp4k/")
+        assert any(t.startswith("regras do cupom: Compra mínima") for t in phone.extra["tags"])
+
+    def test_rsc_undefined_is_none(self):
+        offers = {o.source_id: o for o in OfertaEspertaSource.parse(fixture_text("ofertaesperta_home.html"))}
+        blender = offers["cmwup4p6q001dlj0e4uqqpzij"]
+        assert blender.coupon is None  # "$undefined" in the payload
+        assert not any("$undefined" in t for t in blender.extra["tags"])
+
+    def test_layout_change_raises(self):
+        with pytest.raises(ValueError, match="layout"):
+            OfertaEspertaSource.parse("<html></html>")
+
+
+class TestComparajogos:
+    def test_parses_price_reductions(self):
+        offers = ComparajogosSource.parse(fixture_text("comparajogos_home.html"))
+        assert len(offers) == 15
+        gwt = next(o for o in offers if o.source_id == "55011")
+        assert gwt.title == "Great Western Trail: Second Edition (jogo de tabuleiro)"
+        assert gwt.price == 557.07 and gwt.list_price == 911.11
+        assert gwt.url == "https://www.comparajogos.com.br/item/great-western-trail-second-edition"
+        assert gwt.votes is None  # wishlist count is not a vote on the deal
+
+    def test_layout_change_raises(self):
+        with pytest.raises(ValueError, match="layout"):
+            ComparajogosSource.parse('<script id="__NEXT_DATA__">{"props":{"pageProps":{}}}</script>')

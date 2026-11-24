@@ -19,15 +19,20 @@ fontes (sem LLM) ──► SQLite (ofertas, histórico, enviadas)
 
 | Fonte | Status | Como |
 |---|---|---|
-| Promobit | ✅ | JSON público `__NEXT_DATA__` de `/promocoes/recentes/` e da home |
+| Promobit | ✅ | `__NEXT_DATA__` de `/promocoes/recentes/`, home e 29 categorias (6 por execução, em rodízio) |
+| Pechinchou | ✅ | `__NEXT_DATA__` de `/recentes` e da home |
+| Oferta Esperta | ✅ | dados públicos (RSC) da home |
+| Pelando | ✅ | dados públicos de `/recentes` e `/mais-quentes` |
 | Gatry | ✅ | HTML público de `/promocoes` |
-| Pelando | ✅ | dados públicos da página `/recentes` |
+| Comparajogos | ✅ | maiores quedas de preço de jogos de tabuleiro (home) |
 | KaBuM! | ✅ | páginas de campanha `/ofertas/<slug>`, descobertas na home |
-| Hardmob, Terabyte, Magalu, Pichau | ❌ | bloqueiam robôs (Cloudflare/403); não contornamos |
+| Netshoes, Centauro, Nike, Adidas, Magalu, Casas Bahia, Drogasil, Leroy Merlin, Terabyte, Pichau, Ludopedia… | ❌ | bloqueiam robôs (Cloudflare/403); não contornamos |
 | Amazon, Mercado Livre | ❌ direto | Termos de Uso / robots.txt; ver "APIs oficiais" abaixo |
 
-As ofertas de Amazon, Mercado Livre e Magalu **chegam pelos agregadores**: no
-primeiro dia, 53 das 64 ofertas coletadas eram dessas três lojas.
+As ofertas das lojas bloqueadas **chegam pelos agregadores**, que cobrem todas
+as categorias: roupa, tênis, mercado, beleza, casa, pet, brinquedos etc.
+Lojas: todas, menos Shopee, AliExpress, Temu e lojas de jogos digitais
+(`stores.blacklist` no `config.yaml`).
 
 Regras de coleta: respeita robots.txt, intervalo mínimo por site, User-Agent
 honesto, sem login, sem contornar CAPTCHA/anti-bot. Uma fonte quebrada não
@@ -42,7 +47,7 @@ instalado e logado (`claude` no PATH; usa sua assinatura).
 git clone <este repositório> ofertas && cd ofertas
 python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                      # 113 testes, sem rede
+.venv/bin/pytest                      # 137 testes, sem rede
 ```
 
 ### Bot do Telegram
@@ -114,7 +119,11 @@ Todas as condições, configuráveis em `config.yaml`:
 3. **Claude**: nota ≥ 80 (ou o valor de `/minimo`), não é desconto falso,
    categoria ligada.
 4. **Não repetida**: o mesmo produto não volta em 72 h, a não ser que o preço
-   caia mais 5%.
+   caia mais 5%. Variações de cor/modelo da mesma loja e mesmo preço viram uma
+   mensagem só.
+
+As mensagens vêm com a foto do produto quando a fonte informa (todas menos a
+Gatry).
 
 ### Custos do Claude
 

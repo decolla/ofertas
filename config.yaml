@@ -12,56 +12,112 @@ http:
   min_interval_per_host_seconds: 5
 
 sources:
+  # Agregadores de comunidade (todas as categorias): a maior fonte de ofertas.
   promobit:
     enabled: true
     urls:
       - https://www.promobit.com.br/promocoes/recentes/
       - https://www.promobit.com.br/
-  gatry:
+    # Páginas de categoria em rodízio: 6 por execução, cada uma lida a cada
+    # ~5 execuções (~100 min), para não martelar o site.
+    rotate_per_run: 6
+    rotate_urls:
+      - https://www.promobit.com.br/promocoes/informatica/
+      - https://www.promobit.com.br/promocoes/smartphones-tablets-e-telefones/
+      - https://www.promobit.com.br/promocoes/eletronicos-audio-e-video/
+      - https://www.promobit.com.br/promocoes/eletrodomesticos/
+      - https://www.promobit.com.br/promocoes/eletroportateis/
+      - https://www.promobit.com.br/promocoes/utensilios-domesticos/
+      - https://www.promobit.com.br/promocoes/casa-e-construcao/
+      - https://www.promobit.com.br/promocoes/moveis-e-decoracao/
+      - https://www.promobit.com.br/promocoes/cama-mesa-e-banho/
+      - https://www.promobit.com.br/promocoes/ferramentas-e-jardim/
+      - https://www.promobit.com.br/promocoes/supermercado-e-delivery/
+      - https://www.promobit.com.br/promocoes/bebidas/
+      - https://www.promobit.com.br/promocoes/saude-e-higiene/
+      - https://www.promobit.com.br/promocoes/perfumes-e-beleza/
+      - https://www.promobit.com.br/promocoes/moda-e-calcados-femininos/
+      - https://www.promobit.com.br/promocoes/moda-e-calcados-masculinos/
+      - https://www.promobit.com.br/promocoes/relogios-e-joias/
+      - https://www.promobit.com.br/promocoes/mochilas-e-malas/
+      - https://www.promobit.com.br/promocoes/esporte-e-lazer/
+      - https://www.promobit.com.br/promocoes/suplementos-e-fitness/
+      - https://www.promobit.com.br/promocoes/brinquedos-e-hobbies/
+      - https://www.promobit.com.br/promocoes/bebes-e-criancas/
+      - https://www.promobit.com.br/promocoes/petshop/
+      - https://www.promobit.com.br/promocoes/games/
+      - https://www.promobit.com.br/promocoes/livros-ebooks-e-ereaders/
+      - https://www.promobit.com.br/promocoes/papelaria-e-material-de-escritorio/
+      - https://www.promobit.com.br/promocoes/pecas-e-acessorios-para-automoveis/
+      - https://www.promobit.com.br/promocoes/cameras-filmadoras-e-drones/
+      - https://www.promobit.com.br/promocoes/outros/
+  pechinchou:
     enabled: true
     urls:
-      - https://gatry.com/promocoes
+      - https://www.pechinchou.com.br/recentes
+      - https://www.pechinchou.com.br/
+  ofertaesperta:
+    enabled: true
+    urls:
+      - https://www.ofertaesperta.com/
   pelando:
     enabled: true
     urls:
       - https://www.pelando.com.br/recentes
+      - https://www.pelando.com.br/mais-quentes
+  gatry:
+    enabled: true
+    urls:
+      - https://gatry.com/promocoes
+  # Comparador de jogos de tabuleiro: maiores quedas do menor preço entre lojas.
+  comparajogos:
+    enabled: true
+    urls:
+      - https://www.comparajogos.com.br/
+  # Loja direta (páginas de campanha públicas).
   kabum:
     enabled: true
     max_campaigns: 3       # campanhas /ofertas/<slug> descobertas na home
     urls:
       - https://www.kabum.com.br/   # 1ª URL = home, usada só para descobrir campanhas
-  # Fora por decisão (verificado em 2026-11-23): Hardmob, Terabyte e Magalu
-  # bloqueiam robôs (Cloudflare/403); Pichau 403; Amazon proíbe robôs nos
-  # Termos de Uso; Mercado Livre bloqueia bots de IA no robots.txt. As ofertas
-  # dessas lojas chegam pelos agregadores. APIs oficiais: ver README.
+  # Fora por decisão (verificado em 2026-11-24; não contornamos bloqueios):
+  #  - Cloudflare/403 para robôs: Hardmob, Terabyte, Magalu, Pichau, Netshoes,
+  #    Centauro, Riachuelo, Drogasil, Casas Bahia, Leroy Merlin, Mobly,
+  #    Tok&Stok, Nike, Adidas, Galápagos, Ludopedia, Cuponomia, Pão de Açúcar.
+  #  - Amazon: Termos de Uso proíbem robôs. Mercado Livre: robots.txt barra
+  #    bots de IA. As ofertas delas chegam pelos agregadores. APIs: ver README.
+  #  - Zoom/Buscapé: listam preço sem sinal de desconto (só útil com histórico).
+  #  - Comparajogos /offers e Pechinchou/Oferta Esperta /api: carregados por
+  #    API não documentada; usamos só o que vem na página.
 
 # Categorias monitoradas (a classificação vem do Claude na etapa 2;
 # até lá ofertas sem categoria não são filtradas por aqui).
 categories:
-  enabled: [hardware, eletronicos, casa, consumo, cozinha, jogos_tabuleiro]
+  # Todas ligadas; /categorias no bot liga/desliga sem editar este arquivo.
+  enabled: [hardware, eletronicos, casa, cozinha, consumo, alimentos, moda,
+            calcados, acessorios, beleza, esporte, brinquedos, bebes, pet,
+            ferramentas, livros, jogos_tabuleiro, games, outros]
 
 stores:
-  mode: whitelist   # whitelist: só as listadas | blacklist: todas menos as listadas
-  whitelist:
-    - Amazon
-    - Mercado Livre
-    - Magazine Luiza
-    - Magalu
-    - KaBuM!
-    - Kabum
-    - Pichau
-    - Terabyte
-    - TerabyteShop
-    - Samsung
-    - Casas Bahia
-    - Ponto
-    - Fast Shop
-    - Carrefour
-    - Leroy Merlin
-    - Netshoes
-    - Americanas
-    - Submarino
-  blacklist: []
+  # blacklist: todas as lojas menos as listadas (a whitelist barrava Nike,
+  # Adidas, Dafiti, Renner, Centauro, farmácias...). Quem filtra loja duvidosa
+  # é o Claude (flag vendedor_duvidoso).
+  mode: blacklist
+  blacklist:
+    # marketplaces com muito vendedor genérico/importação
+    - Shopee
+    - AliExpress
+    - Temu
+    # jogos digitais/assinaturas (não são produto físico)
+    - Steam
+    - Nuuvem
+    - Epic Games
+    - EA
+    - PlayStation Store
+    - Microsoft Store
+    - Nintendo eShop
+    - Xbox
+  whitelist: []
 
 criteria:
   # Etapa 3: preço <= mediana dos últimos N dias * (1 - min_discount_vs_median)
@@ -81,6 +137,8 @@ criteria:
     min_votes: 15          # likes (Promobit)
     min_temperature: 300   # engajamento (Promobit)
     per_source:            # escalas de comunidade diferem por fonte
+      comparajogos:                # preço anterior é histórico real, não preço "de"
+        min_declared_discount_alone: 0.25
       pelando:
         min_votes: null
         min_temperature: 150       # graus do Pelando

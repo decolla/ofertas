@@ -75,3 +75,4 @@ class Decision:
     verdict: Verdict | None = None
     pending: bool = False  # waiting for a Claude verdict
     stats: PriceStats | None = None
+    variants: list[str] = field(default_factory=list)  # sibling listings folded into this one

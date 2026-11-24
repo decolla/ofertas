@@ -72,3 +72,25 @@ def normalize_store(store: str | None) -> str | None:
     if not store:
         return None
     return strip_accents(store).lower().replace("!", "").replace(" ", "").strip()
+
+
+# Colour/finish words: listings that differ only by these are variants.
+_VARIANT_WORDS = {
+    "preto", "preta", "branco", "branca", "azul", "vermelho", "vermelha", "rosa",
+    "cinza", "verde", "prata", "dourado", "dourada", "roxo", "roxa", "amarelo",
+    "amarela", "laranja", "lilas", "bege", "grafite", "marrom", "chumbo", "black",
+    "white", "pink", "blue", "red", "gray", "grey", "silver", "gold", "cor", "cores",
+}
+
+
+def same_family(key_a: str, key_b: str, min_overlap: float = 0.6) -> bool:
+    """Two product keys look like variants of one listing (colour, X1/X3...).
+
+    Jaccard overlap of the tokens, ignoring colour words. Callers also require
+    the same store and a near-identical price, which keeps false merges rare.
+    """
+    a = set(key_a.split()) - _VARIANT_WORDS
+    b = set(key_b.split()) - _VARIANT_WORDS
+    if not a or not b:
+        return False
+    return len(a & b) / len(a | b) >= min_overlap

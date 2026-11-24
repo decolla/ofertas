@@ -13,6 +13,7 @@ import logging
 import time
 from datetime import date, timedelta
 
+from ofertas.categories import CATEGORY_LABELS
 from ofertas.config import Config
 from ofertas.notify import Telegram
 from ofertas.storage import Storage, utcnow
@@ -20,15 +21,6 @@ from ofertas.triage import CATEGORIES
 
 log = logging.getLogger(__name__)
 
-CATEGORY_LABELS = {
-    "hardware": "🖥️ Peças de PC",
-    "eletronicos": "📱 Eletrônicos",
-    "casa": "🏠 Casa",
-    "consumo": "🛒 Consumo",
-    "cozinha": "🍳 Cozinha",
-    "jogos_tabuleiro": "🎲 Jogos de tabuleiro",
-    "outros": "📦 Outros",
-}
 
 COMMANDS = [
     ("status", "Situação do monitor"),
@@ -63,11 +55,11 @@ def min_score(cfg: Config, db: Storage) -> int:
 
 
 def categories_keyboard(enabled: list[str]) -> dict:
-    rows = [
-        [{"text": f"{'✅' if c in enabled else '⬜'} {CATEGORY_LABELS[c]}", "callback_data": f"cat:{c}"}]
+    buttons = [
+        {"text": f"{'✅' if c in enabled else '⬜'} {CATEGORY_LABELS[c]}", "callback_data": f"cat:{c}"}
         for c in CATEGORIES
     ]
-    return {"inline_keyboard": rows}
+    return {"inline_keyboard": [buttons[i:i + 2] for i in range(0, len(buttons), 2)]}
 
 
 def status_text(cfg: Config, db: Storage) -> str:

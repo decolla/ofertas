@@ -45,3 +45,16 @@ def test_normalize_store():
     assert normalize_store("KaBuM!") == normalize_store("kabum") == "kabum"
     assert normalize_store("Mercado Livre") == "mercadolivre"
     assert normalize_store(None) is None
+
+
+from ofertas.normalize import same_family  # noqa: E402
+
+
+@pytest.mark.parametrize("a,b,expected", [
+    ("Mouse Gamer Attack Shark X1 12.800 DPI 6 Botões - Branco",
+     "Mouse Gamer Attack Shark X3 12.800 DPI 6 Botões Programáveis - Preto", True),
+    ("Cadeira Gamer XYZ Preta", "Cadeira Gamer XYZ Azul", True),
+    ("Mouse Logitech G203", "Monitor LG 24 IPS Full HD", False),
+])
+def test_same_family(a, b, expected):
+    assert same_family(product_key(a), product_key(b)) is expected

@@ -157,4 +157,4 @@ def test_untrusted_fields_are_clipped():
     o.raw.extra["tags"] = ["t" * 100] * 20
     p = json.loads(build_prompt([o]).split("\n", 1)[1])[0]
     assert len(p["title"]) == 200 and "\x00" not in p["title"] and "\n" not in p["title"]
-    assert len(p["tags"]) == 10 and all(len(t) == 30 for t in p["tags"])
+    assert len(p["tags"]) == 10 and all(len(t) == 80 for t in p["tags"])

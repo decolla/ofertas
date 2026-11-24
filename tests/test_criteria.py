@@ -125,3 +125,13 @@ def test_per_source_override_does_not_leak():
     # promobit keeps the global 300 engagement scale
     o = offer(price=65, list_price=100, votes=0, temperature=200)
     assert evaluate(o, PCRIT, WL, history=[]).ok is False
+
+
+def test_per_source_discount_alone():
+    """Comparajogos' old price is real history: 25% alone is enough there."""
+    crit = {**HCRIT, "fallback": {**HCRIT["fallback"], "per_source": {
+        "comparajogos": {"min_declared_discount_alone": 0.25}}}}
+    cj = offer(source="comparajogos", price=70, list_price=100, votes=None, temperature=None)
+    assert evaluate(cj, crit, WL | {"mode": "blacklist"}, history=[]).ok
+    pm = offer(price=70, list_price=100, votes=0, temperature=0)
+    assert not evaluate(pm, crit, WL | {"mode": "blacklist"}, history=[]).ok

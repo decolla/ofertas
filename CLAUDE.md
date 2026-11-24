@@ -46,8 +46,15 @@ systemd user timer (a cada 20 min).
    O histórico vem de preços vistos nos agregadores (já são "promoções"), então
    a mediana é de preço promocional típico: 25% abaixo dela é bem raro.
    `ofertas report --days 7` mostra quantas passariam em cada limiar.
+   **Variações** (KaBuM! lista cada cor/modelo como produto): mesma loja, preço
+   a ±3% e `same_family()` (Jaccard ≥ 0,6 dos tokens sem cores) → uma mensagem
+   só, com "🎨 outras variações"; variação de algo enviado na janela de 72 h é
+   pulada (`variant_skip`).
 5. **Notificação** — `ofertas/notify.py`, HTTP direto na Bot API (sem
    python-telegram-bot). Chat privado único; comandos só do `TELEGRAM_CHAT_ID`.
+   Com `image` → `sendPhoto` (legenda ≤ 1024); se o Telegram recusar a foto,
+   cai para `sendMessage`. Gatry não tem foto. Promobit: caminho `/<id>.jpg`
+   é servido pelo CDN `i.promobit.com.br` (`photo_url`).
 
 ## Regras de coleta (obrigatórias)
 - Respeitar robots.txt (checado em `ofertas/http.py` antes de cada GET), ToS e
@@ -57,27 +64,53 @@ systemd user timer (a cada 20 min).
 - Não sondar endpoints de API não documentados; usar só páginas públicas
   (HTML/JSON embutido renderizado para o navegador/crawler) ou RSS/API públicos.
 
-## Estado das fontes (verificado em 2026-11-23)
-- **Promobit** ✅ `/promocoes/recentes/` e home: JSON `__NEXT_DATA__` com preço,
-  preço antigo, cupom, likes, engajamento, tags (frete grátis), loja.
+## Estado das fontes (verificado em 2026-11-24)
+Agregadores de comunidade cobrem todas as categorias e lojas (inclusive as que
+bloqueiam robôs); por isso são a base. `Source` aceita `rotate_urls` +
+`rotate_per_run` (rodízio por janela de 20 min, sem estado) e tolera falha de
+uma página (só falha a fonte se todas falharem; `BlockedError` para na hora).
+- **Promobit** ✅ `/promocoes/recentes/`, home e 29 páginas de categoria em
+  rodízio (6/execução): JSON `__NEXT_DATA__` com preço, preço antigo, cupom,
+  likes, engajamento, tags, loja. Foto: `/<id>.jpg` → CDN `i.promobit.com.br`.
+- **Pechinchou** ✅ `/recentes` e home: `__NEXT_DATA__` `pageProps.promos.results`
+  (preço, preço antigo, loja, cupons, categoria, flag "menor preço"). Link
+  `/oferta/<id>`. "Frete grátis assinantes" não conta como frete grátis.
+- **Oferta Esperta** ✅ home: payload RSC (`self.__next_f.push`) com
+  `initialOffers`; `"$undefined"` = vazio. Link = `href` `/promocao/<id>/<slug>`
+  da própria página. Regras do cupom vão nas tags para o Claude.
 - **Gatry** ✅ `/promocoes`: HTML SSR com título, preço, loja e link. Sem preço
-  "de" nem votos → depende do nosso histórico de preços.
-- **Pelando** ✅ `/recentes`: atributo `props` da astro-island
-  `RecentsFeedContent` (formato Astro `[tipo, valor]`, ver `astro_decode`).
-  Sem preço "de"; temperatura em graus → limites próprios em
-  `criteria.fallback.per_source.pelando`. Posts `kind: coupon` são ignorados.
+  "de", votos nem foto → depende do nosso histórico de preços.
+- **Pelando** ✅ `/recentes` e `/mais-quentes`: atributo `props` da astro-island
+  (formato Astro `[tipo, valor]`, ver `astro_decode`). Sem preço "de";
+  temperatura em graus → limites próprios em `criteria.fallback.per_source`.
+  Posts `kind: coupon` são ignorados.
+- **Comparajogos** ✅ home: cache Apollo em `__NEXT_DATA__`, lista
+  `price_reduction` (maiores quedas do menor preço entre lojas de jogos de
+  tabuleiro). O preço anterior é histórico real → `per_source.comparajogos.
+  min_declared_discount_alone: 0.25`. Lista de desejos não conta como voto.
 - **KaBuM!** ✅ páginas de campanha `/ofertas/<slug>` (descobertas na home a
   cada execução, até `max_campaigns`): `pageProps.dataOfferServer.data`. Preço
   usado = `priceWithDiscount` (PIX). Open box/pré-venda/indisponível são
   descartados; vendedor de marketplace vira loja "X (marketplace KaBuM!)". O
   preço "de" da KaBuM! costuma ser inflado: quem filtra é o Claude/histórico.
-- **Fora** ❌: Hardmob, Terabyte (Cloudflare); Magalu, Pichau (403); Amazon
-  (Termos de Uso proíbem robôs); Mercado Livre (robots.txt bloqueia bots de IA).
-  As ofertas dessas lojas chegam pelos agregadores. O usuário quer cobertura
-  direta de Amazon e ML **só por API oficial**: Amazon Creators API (PA-API 5
-  foi desativada em 2026) e API do ML (busca `/sites/MLB/search` com 403
+- **Fora** ❌ (bloqueiam robôs, não contornamos): Hardmob, Terabyte, Magalu,
+  Pichau, Netshoes, Centauro, Riachuelo, Drogasil, Casas Bahia, Leroy Merlin,
+  Mobly, Tok&Stok, Nike, Adidas, Galápagos, Ludopedia, Cuponomia, Pão de
+  Açúcar. Amazon (Termos de Uso proíbem robôs); Mercado Livre (robots.txt
+  bloqueia bots de IA). Zoom/Buscapé: preço sem sinal de desconto. As ofertas
+  dessas lojas chegam pelos agregadores. O usuário quer cobertura direta de
+  Amazon e ML **só por API oficial**: Amazon Creators API (PA-API 5 foi
+  desativada em 2026) e API do ML (busca `/sites/MLB/search` com 403
   relatado; testar `/products/search`). Integrar só quando houver credenciais,
   validando contra a API real.
+- Nunca usar User-Agent de navegador para "testar" uma página: sempre o UA
+  honesto do `config.yaml`.
+
+## Lojas e categorias
+- `stores.mode: blacklist` (todas menos Shopee/AliExpress/Temu e lojas de jogos
+  digitais). A whitelist antiga barrava Nike, Dafiti, Renner, farmácias etc.
+- 19 categorias (`triage.CATEGORIES`, rótulos em `ofertas/categories.py`), todas
+  ligadas por padrão; `/categorias` no bot mostra 2 botões por linha.
 
 ## Bot
 - `ofertas bot` (processo contínuo, `ofertas-bot.service`): long polling,
@@ -128,3 +161,5 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 2. Claude CLI: classificar, normalizar nome, detectar fake, nota 0-100. ✅
 3. Histórico de preços e critério estatístico (mediana 30-90d / menor preço). ✅
 4. Mais fontes, comandos do bot, systemd, README de deploy. ✅ (Pelando, KaBuM!)
+5. Busca ampla (Black Friday): Pechinchou, Oferta Esperta, Comparajogos,
+   categorias da Promobit em rodízio, lojas em blacklist, 19 categorias. ✅

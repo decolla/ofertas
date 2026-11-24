@@ -29,8 +29,8 @@ def campaign_paths(home_html: str, limit: int) -> list[str]:
 class KabumSource(Source):
     name = "kabum"
 
-    def __init__(self, client, urls, max_campaigns: int = 3):
-        super().__init__(client, urls)
+    def __init__(self, client, urls, max_campaigns: int = 3, **kw):
+        super().__init__(client, urls, **kw)
         self.max_campaigns = max_campaigns
 
     def fetch(self) -> list[RawOffer]:

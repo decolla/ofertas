@@ -9,6 +9,7 @@ from ofertas.models import RawOffer
 from ofertas.sources.base import Source
 
 BASE = "https://www.promobit.com.br"
+IMAGE_CDN = "https://i.promobit.com.br"
 _NEXT_DATA = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', re.S)
 _OFFER_LISTS = ("serverOffers", "serverFeaturedOffers")
 
@@ -38,6 +39,19 @@ class PromobitSource(Source):
         return list(offers.values())
 
 
+def photo_url(photo: str | None) -> str | None:
+    """Promobit publishes '/<id>.jpg' (served by its image CDN, as the site
+    does) or '/static/p/<id>.jpg' / a full URL (sometimes with '//static')."""
+    if not photo:
+        return None
+    if photo.startswith(BASE):
+        photo = photo[len(BASE):]
+    if photo.startswith("http"):
+        return photo
+    photo = "/" + photo.lstrip("/")
+    return (BASE if photo.startswith("/static/") else IMAGE_CDN) + photo
+
+
 def _to_offer(it: dict) -> RawOffer | None:
     price = it.get("offerPrice")
     store = (it.get("storeName") or "").strip() or None
@@ -61,7 +75,7 @@ def _to_offer(it: dict) -> RawOffer | None:
         free_shipping=any("frete gr" in t.lower() for t in tags),
         votes=it.get("offerLikes"),
         temperature=it.get("offerEngagementScore"),
-        image=photo,  # raw path as published; host not needed for now
+        image=photo_url(photo),
         published_at=it.get("offerPublished"),
         extra={
             "status": it.get("offerStatusName"),

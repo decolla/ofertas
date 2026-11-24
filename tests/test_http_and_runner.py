@@ -233,3 +233,125 @@ def test_same_product_different_titles_sent_once(cfg):
     tri = Triage(CountingCLI(score=90), db, daily_limit=10, today=lambda: date(2026, 11, 23))
     run(cfg, client_for(routes), db, tg, triage=tri)
     assert len(tg.offers) == 1
+
+
+def promobit_variants(*variants: tuple[int, str, float, str]) -> str:
+    """Fixture with the fan replaced by listings (id, title, price, store)."""
+    page = promobit_with(offerLikes=40)
+    data_start = page.index('application/json">') + len('application/json">')
+    data_end = page.index("</script>", data_start)
+    data = json.loads(page[data_start:data_end])
+    offers = data["props"]["pageProps"]["serverOffers"]["offers"]
+    fan = next(o for o in offers if o["offerId"] == 3242903)
+    offers.remove(fan)
+    for oid, title, price, store in variants:
+        offers.append(dict(fan, offerId=oid, offerTitle=title, offerSlug=f"x-{oid}",
+                           offerPrice=price, offerOldPrice=price * 3, storeName=store))
+    return page[:data_start] + json.dumps(data) + page[data_end:]
+
+
+MOUSE_X1 = (1, "Mouse Gamer com Fio Attack Shark X1, Ultraleve, 12.800 DPI, 6 Botões - Branco", 59.99, "Amazon")
+MOUSE_X3P = (2, "Mouse Gamer com Fio Attack Shark X3, 12.800 DPI, 6 Botões Programáveis - Preto", 59.99, "Amazon")
+MOUSE_X3B = (3, "Mouse Gamer com Fio Attack Shark X3, 12.800 DPI, 6 Botões Programáveis - Branco", 59.99, "Amazon")
+
+
+def test_colour_variants_fold_into_one_message(cfg):
+    other_store = (4, MOUSE_X1[1].replace("Branco", "Preto"), 59.99, "KaBuM!")
+    other_price = (5, "Mouse Gamer com Fio Attack Shark X5, 26.000 DPI, 6 Botões Programáveis - Preto", 99.9, "Amazon")
+    routes = dict(ROUTES_OK)
+    routes["https://www.promobit.com.br/promocoes/recentes/"] = html(
+        promobit_variants(MOUSE_X1, MOUSE_X3P, MOUSE_X3B, other_store, other_price))
+    db, tg = Storage(":memory:"), FakeTelegram()
+    rep = run(cfg, client_for(routes), db, tg, max_notifications=10)
+    assert sorted(o.raw.source_id for o in rep.sent) == ["1", "4", "5"]
+    (_, d), = [(o, d) for o, d in rep.evaluated if o.raw.source_id == "1"]
+    assert [t.rsplit(" - ", 1)[1] for t in d.variants] == ["Preto", "Branco"]
+
+
+def test_variant_of_recently_sent_is_not_sent_later(cfg):
+    routes = dict(ROUTES_OK)
+    routes["https://www.promobit.com.br/promocoes/recentes/"] = html(promobit_variants(MOUSE_X1))
+    db, tg = Storage(":memory:"), FakeTelegram()
+    run(cfg, client_for(routes), db, tg)
+    routes["https://www.promobit.com.br/promocoes/recentes/"] = html(promobit_variants(MOUSE_X1, MOUSE_X3P))
+    rep = run(cfg, client_for(routes), db, tg)
+    assert rep.sent == [] and [o.raw.source_id for o in tg.offers] == ["1"]
+
+
+# -- Telegram photo ------------------------------------------------------------
+from ofertas.models import Decision, RawOffer, StoredOffer  # noqa: E402
+from ofertas.notify import Telegram  # noqa: E402
+
+
+def tg_with(responses: dict) -> tuple[Telegram, list]:
+    calls = []
+
+    def handler(req):
+        method = req.url.path.rsplit("/", 1)[1]
+        calls.append((method, json.loads(req.content)))
+        return httpx.Response(200, json=responses[method])
+
+    return Telegram("TOKEN", "42", transport=httpx.MockTransport(handler)), calls
+
+
+def stored(image):
+    raw = RawOffer(source="kabum", source_id="1", title="Mouse", price=59.99,
+                   url="https://loja/x", store="KaBuM!", image=image)
+    return StoredOffer(id=1, raw=raw, url_canon="https://loja/x", product_key="mouse",
+                       is_new=True, price_changed=False)
+
+
+OK = {"ok": True, "result": {"message_id": 7}}
+
+
+def test_offer_with_image_goes_as_photo_with_caption_and_button():
+    tg, calls = tg_with({"sendPhoto": OK})
+    assert tg.send_offer(stored("https://img/x.jpg"), Decision(ok=True)) == 7
+    (method, body), = calls
+    assert method == "sendPhoto" and body["photo"] == "https://img/x.jpg"
+    assert "Mouse" in body["caption"] and body["reply_markup"]["inline_keyboard"][0][0]["url"] == "https://loja/x"
+
+
+def test_photo_rejected_falls_back_to_text():
+    tg, calls = tg_with({"sendPhoto": {"ok": False, "description": "wrong type of the web page content"},
+                         "sendMessage": OK})
+    assert tg.send_offer(stored("https://img/x.webp"), Decision(ok=True)) == 7
+    assert [m for m, _ in calls] == ["sendPhoto", "sendMessage"]
+
+
+def test_no_image_sends_text():
+    tg, calls = tg_with({"sendMessage": OK})
+    tg.send_offer(stored(None), Decision(ok=True))
+    assert [m for m, _ in calls] == ["sendMessage"]
+
+
+# -- rotation and per-page failures --------------------------------------------
+from ofertas.sources.base import ROTATION_SLOT_SECONDS, rotation  # noqa: E402
+from ofertas.sources.promobit import PromobitSource  # noqa: E402
+
+
+def test_rotation_covers_every_url_round_robin():
+    urls = [f"u{i}" for i in range(7)]
+    seen = []
+    for slot in range(3):
+        seen += rotation(urls, 3, now=slot * ROTATION_SLOT_SECONDS)
+    assert set(seen) == set(urls)
+    assert rotation(urls, 3, now=0) == ["u0", "u1", "u2"]
+    assert rotation(urls, 10) == urls and rotation([], 3) == []
+
+
+def test_one_bad_page_does_not_lose_the_others():
+    page = fixture_text("promobit_recentes.html")
+    c = client_for({"https://p.com/a": html(page), "https://p.com/b": httpx.Response(404)})
+    assert len(PromobitSource(c, ["https://p.com/a", "https://p.com/b"]).fetch()) == 12
+    with pytest.raises(Exception):
+        PromobitSource(c, ["https://p.com/b"]).fetch()  # every page failed
+
+
+def test_blocked_page_stops_the_source():
+    page = fixture_text("promobit_recentes.html")
+    calls = []
+    c = client_for({"https://p.com/a": httpx.Response(403), "https://p.com/b": html(page)}, calls)
+    with pytest.raises(BlockedError):
+        PromobitSource(c, ["https://p.com/a", "https://p.com/b"]).fetch()
+    assert "https://p.com/b" not in calls
