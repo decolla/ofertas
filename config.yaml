@@ -18,9 +18,10 @@ sources:
     urls:
       - https://www.promobit.com.br/promocoes/recentes/
       - https://www.promobit.com.br/
-    # Páginas de categoria em rodízio: 6 por execução, cada uma lida a cada
-    # ~5 execuções (~100 min), para não martelar o site.
-    rotate_per_run: 6
+    # Páginas de categoria e de tag (/s/) em rodízio: 10 por execução, cada uma
+    # lida a cada ~7 execuções (~2h20), para não martelar o site. A paginação
+    # (?page=2) é ignorada pelo site: só categorias trazem ofertas a mais.
+    rotate_per_run: 10
     rotate_urls:
       - https://www.promobit.com.br/promocoes/informatica/
       - https://www.promobit.com.br/promocoes/smartphones-tablets-e-telefones/
@@ -51,20 +52,132 @@ sources:
       - https://www.promobit.com.br/promocoes/pecas-e-acessorios-para-automoveis/
       - https://www.promobit.com.br/promocoes/cameras-filmadoras-e-drones/
       - https://www.promobit.com.br/promocoes/outros/
+      # tags (/s/): o que a página de categoria geral mistura e corta
+      - https://www.promobit.com.br/promocoes/jogos-tabuleiro/s/
+      - https://www.promobit.com.br/promocoes/lego/s/
+      - https://www.promobit.com.br/promocoes/funko-pop/s/
+      - https://www.promobit.com.br/promocoes/barbie/s/
+      - https://www.promobit.com.br/promocoes/calcados/s/
+      - https://www.promobit.com.br/promocoes/calcados-masculinos/s/
+      - https://www.promobit.com.br/promocoes/calcados-infantis/s/
+      - https://www.promobit.com.br/promocoes/tenis-masculino/s/
+      - https://www.promobit.com.br/promocoes/tenis-adidas-masculino/s/
+      - https://www.promobit.com.br/promocoes/chuteira/s/
+      - https://www.promobit.com.br/promocoes/roupas-mulheres/s/
+      - https://www.promobit.com.br/promocoes/roupa-masculina/s/
+      - https://www.promobit.com.br/promocoes/roupa-infantil/s/
+      - https://www.promobit.com.br/promocoes/jaquetas-e-casacos/s/
+      - https://www.promobit.com.br/promocoes/lingerie/s/
+      - https://www.promobit.com.br/promocoes/bolsas-acessorios/s/
+      - https://www.promobit.com.br/promocoes/relogio/s/
+      - https://www.promobit.com.br/promocoes/oculos-masculino/s/
+      - https://www.promobit.com.br/promocoes/oculos-feminino/s/
+      - https://www.promobit.com.br/promocoes/mochila/s/
+      - https://www.promobit.com.br/promocoes/mala-de-viagem/s/
+      - https://www.promobit.com.br/promocoes/acessorios-cozinha/s/
+      - https://www.promobit.com.br/promocoes/jogo-de-panelas/s/
+      - https://www.promobit.com.br/promocoes/faqueiro/s/
+      - https://www.promobit.com.br/promocoes/talheres/s/
+      - https://www.promobit.com.br/promocoes/aparelho-jantar/s/
+      - https://www.promobit.com.br/promocoes/cafeteiras/s/
+      - https://www.promobit.com.br/promocoes/copos-tacas-canecas/s/
+      - https://www.promobit.com.br/promocoes/copo-stanley/s/
+      - https://www.promobit.com.br/promocoes/air-fryer-5-litros/s/
+      - https://www.promobit.com.br/promocoes/comida/s/
+      - https://www.promobit.com.br/promocoes/cerveja/s/
+      - https://www.promobit.com.br/promocoes/vinho/s/
+      - https://www.promobit.com.br/promocoes/whisky/s/
+      - https://www.promobit.com.br/promocoes/perfume/s/
+      - https://www.promobit.com.br/promocoes/maquiagem/s/
+      - https://www.promobit.com.br/promocoes/skin-care/s/
+      - https://www.promobit.com.br/promocoes/produtos-de-limpeza/s/
+      - https://www.promobit.com.br/promocoes/fraldas/s/
+      - https://www.promobit.com.br/promocoes/suplementos/s/
+      - https://www.promobit.com.br/promocoes/whey-protein/s/
+      - https://www.promobit.com.br/promocoes/camping/s/
+      - https://www.promobit.com.br/promocoes/bicicleta/s/
+      - https://www.promobit.com.br/promocoes/jogo-de-cama/s/
+      - https://www.promobit.com.br/promocoes/edredons-e-cobertores/s/
+      - https://www.promobit.com.br/promocoes/toalha-de-banho/s/
+      - https://www.promobit.com.br/promocoes/ferramentas/s/
+      - https://www.promobit.com.br/promocoes/robo-aspirador/s/
   pechinchou:
     enabled: true
     urls:
       - https://www.pechinchou.com.br/recentes
       - https://www.pechinchou.com.br/
+    rotate_per_run: 4      # 23 categorias: cada uma a cada ~2 h
+    rotate_urls:
+      - https://www.pechinchou.com.br/categorias/eletronicos
+      - https://www.pechinchou.com.br/categorias/informatica
+      - https://www.pechinchou.com.br/categorias/telefonia
+      - https://www.pechinchou.com.br/categorias/televisao
+      - https://www.pechinchou.com.br/categorias/eletrodomesticos
+      - https://www.pechinchou.com.br/categorias/eletroportateis
+      - https://www.pechinchou.com.br/categorias/utilidades-domesticas
+      - https://www.pechinchou.com.br/categorias/ar-e-ventilacao
+      - https://www.pechinchou.com.br/categorias/moveis-e-decoracao
+      - https://www.pechinchou.com.br/categorias/cama-mesa-e-banho
+      - https://www.pechinchou.com.br/categorias/ferramentas-e-casa
+      - https://www.pechinchou.com.br/categorias/moda-beleza-e-perfumaria
+      - https://www.pechinchou.com.br/categorias/supermercado
+      - https://www.pechinchou.com.br/categorias/bebidas
+      - https://www.pechinchou.com.br/categorias/saude
+      - https://www.pechinchou.com.br/categorias/criancas-e-bebes
+      - https://www.pechinchou.com.br/categorias/esporte-e-lazer
+      - https://www.pechinchou.com.br/categorias/games
+      - https://www.pechinchou.com.br/categorias/livros-e-midias
+      - https://www.pechinchou.com.br/categorias/petshop
+      - https://www.pechinchou.com.br/categorias/papelaria-e-escritorio
+      - https://www.pechinchou.com.br/categorias/automotivo
+      - https://www.pechinchou.com.br/categorias/outros
   ofertaesperta:
     enabled: true
     urls:
       - https://www.ofertaesperta.com/
+      - https://www.ofertaesperta.com/?sort=curtidas
+    rotate_per_run: 5      # 24 categorias: cada uma a cada ~1h40
+    rotate_urls:
+      - https://www.ofertaesperta.com/categoria/alimentos-e-bebidas
+      - https://www.ofertaesperta.com/categoria/ar-e-climatizacao
+      - https://www.ofertaesperta.com/categoria/audio-e-musica
+      - https://www.ofertaesperta.com/categoria/automotivo
+      - https://www.ofertaesperta.com/categoria/bebes
+      - https://www.ofertaesperta.com/categoria/beleza-e-cuidados-pessoais
+      - https://www.ofertaesperta.com/categoria/brinquedos-e-jogos
+      - https://www.ofertaesperta.com/categoria/cama-mesa-e-banho
+      - https://www.ofertaesperta.com/categoria/cameras-e-drones
+      - https://www.ofertaesperta.com/categoria/casa-inteligente
+      - https://www.ofertaesperta.com/categoria/cozinha-e-mesa
+      - https://www.ofertaesperta.com/categoria/eletrodomesticos-e-eletroportateis
+      - https://www.ofertaesperta.com/categoria/esporte-e-fitness
+      - https://www.ofertaesperta.com/categoria/ferramentas-e-construcao
+      - https://www.ofertaesperta.com/categoria/games-e-consoles
+      - https://www.ofertaesperta.com/categoria/limpeza-e-cuidados-com-a-casa
+      - https://www.ofertaesperta.com/categoria/moda-e-acessorios
+      - https://www.ofertaesperta.com/categoria/moveis-e-decoracao
+      - https://www.ofertaesperta.com/categoria/notebooks-e-informatica
+      - https://www.ofertaesperta.com/categoria/papelaria-e-livros
+      - https://www.ofertaesperta.com/categoria/pet-shop
+      - https://www.ofertaesperta.com/categoria/smartphones-e-tablets
+      - https://www.ofertaesperta.com/categoria/suplementos-e-nutricao
+      - https://www.ofertaesperta.com/categoria/tv-e-video
   pelando:
     enabled: true
     urls:
       - https://www.pelando.com.br/recentes
       - https://www.pelando.com.br/mais-quentes
+      - https://www.pelando.com.br/comentadas
+    rotate_per_run: 3      # comunidades (/c/): cada uma a cada ~1 h
+    rotate_urls:
+      - https://www.pelando.com.br/c/para-meu-lar
+      - https://www.pelando.com.br/c/para-elas
+      - https://www.pelando.com.br/c/para-eles
+      - https://www.pelando.com.br/c/para-minha-familia
+      - https://www.pelando.com.br/c/esporte-e-vida
+      - https://www.pelando.com.br/c/tech-lover
+      - https://www.pelando.com.br/c/mundo-gamer
+      - https://www.pelando.com.br/c/cultura
   gatry:
     enabled: true
     urls:

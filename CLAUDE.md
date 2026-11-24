@@ -67,20 +67,24 @@ systemd user timer (a cada 20 min).
 ## Estado das fontes (verificado em 2026-11-24)
 Agregadores de comunidade cobrem todas as categorias e lojas (inclusive as que
 bloqueiam robôs); por isso são a base. `Source` aceita `rotate_urls` +
-`rotate_per_run` (rodízio por janela de 20 min, sem estado) e tolera falha de
+`rotate_per_run` (rodízio por janela de 20 min, sem estado; `?page=2` é
+ignorado por Promobit e Gatry, então só categorias/tags trazem ofertas a mais) e tolera falha de
 uma página (só falha a fonte se todas falharem; `BlockedError` para na hora).
-- **Promobit** ✅ `/promocoes/recentes/`, home e 29 páginas de categoria em
-  rodízio (6/execução): JSON `__NEXT_DATA__` com preço, preço antigo, cupom,
+- **Promobit** ✅ `/promocoes/recentes/`, home, 29 páginas de categoria e 48
+  de tag (`/promocoes/<tag>/s/`) em rodízio (10/execução): JSON `__NEXT_DATA__` com preço, preço antigo, cupom,
   likes, engajamento, tags, loja. Foto: `/<id>.jpg` → CDN `i.promobit.com.br`.
-- **Pechinchou** ✅ `/recentes` e home: `__NEXT_DATA__` `pageProps.promos.results`
+- **Pechinchou** ✅ `/recentes`, home e 23 `/categorias/<slug>` (4/execução): `__NEXT_DATA__` `pageProps.promos.results`
   (preço, preço antigo, loja, cupons, categoria, flag "menor preço"). Link
   `/oferta/<id>`. "Frete grátis assinantes" não conta como frete grátis.
-- **Oferta Esperta** ✅ home: payload RSC (`self.__next_f.push`) com
+- **Oferta Esperta** ✅ home, `/?sort=curtidas` e 24 `/categoria/<slug>`
+  (5/execução): payload RSC (`self.__next_f.push`) com
   `initialOffers`; `"$undefined"` = vazio. Link = `href` `/promocao/<id>/<slug>`
   da própria página. Regras do cupom vão nas tags para o Claude.
 - **Gatry** ✅ `/promocoes`: HTML SSR com título, preço, loja e link. Sem preço
   "de", votos nem foto → depende do nosso histórico de preços.
-- **Pelando** ✅ `/recentes` e `/mais-quentes`: atributo `props` da astro-island
+- **Pelando** ✅ `/recentes`, `/mais-quentes`, `/comentadas` e 8 comunidades
+  `/c/<slug>` (3/execução): chave `initialDeals` no `props` da astro-island
+  (nas `/c/` ela vem depois de `community`)
   (formato Astro `[tipo, valor]`, ver `astro_decode`). Sem preço "de";
   temperatura em graus → limites próprios em `criteria.fallback.per_source`.
   Posts `kind: coupon` são ignorados.
@@ -163,3 +167,5 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 4. Mais fontes, comandos do bot, systemd, README de deploy. ✅ (Pelando, KaBuM!)
 5. Busca ampla (Black Friday): Pechinchou, Oferta Esperta, Comparajogos,
    categorias da Promobit em rodízio, lojas em blacklist, 19 categorias. ✅
+   Depois: categorias em rodízio em Pechinchou, Oferta Esperta e Pelando, e
+   tags da Promobit (~140 páginas, ~37 por execução). ✅

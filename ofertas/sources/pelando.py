@@ -1,6 +1,8 @@
-"""Pelando: /recentes is an Astro page; the deal list is in the public `props`
-attribute of the RecentsFeedContent island, in Astro's serialised format
-where every value is wrapped as [type, value] (type 1 = array)."""
+"""Pelando: /recentes, /mais-quentes and community pages (/c/<slug>) are Astro
+pages; the deal list is the `initialDeals` key in the public `props` attribute
+of the feed island (on /c/ pages it comes after `community`, `sort`...), in
+Astro's serialised format where every value is wrapped as [type, value]
+(type 1 = array)."""
 
 from __future__ import annotations
 
@@ -12,7 +14,7 @@ from ofertas.models import RawOffer
 from ofertas.sources.base import Source
 
 BASE = "https://www.pelando.com.br"
-_ISLAND = re.compile(r'<astro-island[^>]*\sprops="(\{&quot;initialDeals[^"]*)"', re.S)
+_ISLAND = re.compile(r'<astro-island[^>]*\sprops="(\{[^"]*&quot;initialDeals&quot;[^"]*)"', re.S)
 
 
 def astro_decode(v):

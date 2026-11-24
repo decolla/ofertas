@@ -72,6 +72,14 @@ class TestPelando:
         assert vonixx.temperature == 5 and vonixx.list_price is None
         assert vonixx.url == "https://www.pelando.com.br/d/vonixx-restaurax-500ml-protecao-uv-toque-seco-1f1f"
 
+    def test_community_page_has_deals_after_other_props(self):
+        # /c/<slug> pages: the island props start with community/sort/feedName.
+        page = fixture_text("pelando_recentes.html").replace(
+            'props="{&quot;initialDeals',
+            'props="{&quot;community&quot;:[0,{&quot;slug&quot;:[0,&quot;para-meu-lar&quot;]}],'
+            '&quot;sort&quot;:[0,&quot;createdAt&quot;],&quot;initialDeals', 1)
+        assert len(PelandoSource.parse(page)) == 10
+
     def test_missing_island_raises(self):
         with pytest.raises(ValueError, match="layout"):
             PelandoSource.parse("<html></html>")

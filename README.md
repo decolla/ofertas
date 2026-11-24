@@ -19,10 +19,10 @@ fontes (sem LLM) ──► SQLite (ofertas, histórico, enviadas)
 
 | Fonte | Status | Como |
 |---|---|---|
-| Promobit | ✅ | `__NEXT_DATA__` de `/promocoes/recentes/`, home e 29 categorias (6 por execução, em rodízio) |
-| Pechinchou | ✅ | `__NEXT_DATA__` de `/recentes` e da home |
-| Oferta Esperta | ✅ | dados públicos (RSC) da home |
-| Pelando | ✅ | dados públicos de `/recentes` e `/mais-quentes` |
+| Promobit | ✅ | `__NEXT_DATA__` de `/promocoes/recentes/`, home, 29 categorias e 48 tags (`/s/`: tênis, roupas, panelas, jogos de tabuleiro, bebidas...), 10 por execução em rodízio |
+| Pechinchou | ✅ | `__NEXT_DATA__` de `/recentes`, home e 23 categorias (4 por execução) |
+| Oferta Esperta | ✅ | dados públicos (RSC) da home, mais curtidas e 24 categorias (5 por execução) |
+| Pelando | ✅ | dados públicos de `/recentes`, `/mais-quentes`, `/comentadas` e 8 comunidades `/c/` (3 por execução) |
 | Gatry | ✅ | HTML público de `/promocoes` |
 | Comparajogos | ✅ | maiores quedas de preço de jogos de tabuleiro (home) |
 | KaBuM! | ✅ | páginas de campanha `/ofertas/<slug>`, descobertas na home |
@@ -47,7 +47,7 @@ instalado e logado (`claude` no PATH; usa sua assinatura).
 git clone <este repositório> ofertas && cd ofertas
 python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                      # 137 testes, sem rede
+.venv/bin/pytest                      # 138 testes, sem rede
 ```
 
 ### Bot do Telegram
