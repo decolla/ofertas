@@ -54,7 +54,7 @@ def _val(v):
 
 def _to_offer(it: dict, links: dict[str, str]) -> RawOffer | None:
     it = {k: _val(v) for k, v in it.items()}
-    if it.get("encerrada") or it.get("reported") or not it.get("id") or not it.get("title"):
+    if it.get("reported") or not it.get("id") or not it.get("title"):
         return None
     # priceNow "R$ 1.619" + priceCents ",10"
     price = parse_brl(f"{it.get('priceNow') or ''}{it.get('priceCents') or ''}")
@@ -83,5 +83,6 @@ def _to_offer(it: dict, links: dict[str, str]) -> RawOffer | None:
         votes=it.get("likes"),
         image=it.get("image"),
         published_at=it.get("postedDate"),
+        ended=bool(it.get("encerrada")),
         extra={"comments": it.get("comments"), "medal": it.get("medal"), "tags": tags},
     )

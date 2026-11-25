@@ -119,6 +119,12 @@ promoção nos últimos 90 dias: é o melhor dado de referência que você tem; 
 null = sem histórico ainda, use seu conhecimento de mercado.
 - reason: justificativa em português, no máximo 140 caracteres.
 
+Pode vir também "gosto_do_usuario": ofertas que o usuário já recebeu e marcou \
+com 👍 (gostou) ou 👎 (não curtiu). Use como sinal do gosto dele para ajustar \
+a nota de ofertas PARECIDAS (mesmo tipo de produto, faixa de preço, loja): \
+👎 em algo parecido => nota menor; 👍 => pode subir um pouco. Nunca torne fake \
+uma oferta boa por isso, e não avalie os exemplos: eles não entram na resposta.
+
 Devolva exatamente um item por oferta recebida, com o mesmo id."""
 
 
@@ -208,9 +214,28 @@ def offer_payload(offer: StoredOffer, stats: PriceStats | None = None) -> dict:
     }
 
 
-def build_prompt(offers: list[StoredOffer], stats: dict | None = None) -> str:
+def feedback_payload(rows) -> list[dict]:
+    """The user's 👍/👎 as compact, clipped examples (titles are untrusted)."""
+    return [
+        {
+            "voto": "👍" if r["vote"] > 0 else "👎",
+            "produto": _clip(r["name_norm"] or r["title"], 120),
+            "categoria": r["category"],
+            "preco": r["price"],
+            "loja": _clip(r["store"], 40),
+        }
+        for r in rows
+    ]
+
+
+def build_prompt(offers: list[StoredOffer], stats: dict | None = None,
+                 feedback: list[dict] | None = None) -> str:
     stats = stats or {}
-    return "Avalie estas ofertas:\n" + json.dumps(
+    head = ""
+    if feedback:
+        head = "gosto_do_usuario (exemplos, NÃO avaliar):\n" + json.dumps(
+            feedback, ensure_ascii=False) + "\n\n"
+    return head + "Avalie estas ofertas:\n" + json.dumps(
         [offer_payload(o, stats.get(o.id)) for o in offers], ensure_ascii=False, indent=1
     )
 
@@ -271,12 +296,13 @@ class Triage:
     def remaining(self) -> int:
         return max(0, self.daily_limit - self.usage.claude_calls(self.today()))
 
-    def judge(self, offers: list[StoredOffer], stats: dict | None = None) -> dict[int, Verdict]:
+    def judge(self, offers: list[StoredOffer], stats: dict | None = None,
+              feedback: list[dict] | None = None) -> dict[int, Verdict]:
+        """`offers` must come in priority order (the runner sorts them): with
+        max_batches_per_run only the first batches are judged this run."""
         results: dict[int, Verdict] = {}
         if self.max_batches_per_run:
-            # Spread a backlog over several runs instead of one burst; the
-            # highest declared discounts go first.
-            offers = sorted(offers, key=lambda o: o.raw.declared_discount or 0, reverse=True)
+            # Spread a backlog over several runs instead of one burst.
             offers = offers[: self.max_batches_per_run * self.batch_size]
         for start in range(0, len(offers), self.batch_size):
             batch = offers[start:start + self.batch_size]
@@ -286,7 +312,7 @@ class Triage:
             day = self.today()
             self.usage.add_claude_call(day)  # count the attempt before spending it
             try:
-                data = self.cli(build_prompt(batch, stats))
+                data = self.cli(build_prompt(batch, stats, feedback))
                 verdicts = parse_result(data, {str(o.id) for o in batch}, self.model)
             except TriageError as exc:
                 log.error("triage_failed", extra={"error": str(exc), "batch": len(batch)})

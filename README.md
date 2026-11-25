@@ -19,9 +19,9 @@ fontes (sem LLM) ──► SQLite (ofertas, histórico, enviadas)
 
 | Fonte | Status | Como |
 |---|---|---|
-| Promobit | ✅ | `__NEXT_DATA__` de `/promocoes/recentes/`, home, 29 categorias e 48 tags (`/s/`: tênis, roupas, panelas, jogos de tabuleiro, bebidas...), 10 por execução em rodízio |
+| Promobit | ✅ | `__NEXT_DATA__` de `/promocoes/recentes/`, home, 29 categorias, 48 tags (`/s/`: tênis, roupas, panelas, jogos de tabuleiro, bebidas...) e 38 lojas (Netshoes, Centauro, Nike, Magalu, Pichau...), 14 por execução em rodízio |
 | Pechinchou | ✅ | `__NEXT_DATA__` de `/recentes`, home e 23 categorias (4 por execução) |
-| Oferta Esperta | ✅ | dados públicos (RSC) da home, mais curtidas e 24 categorias (5 por execução) |
+| Oferta Esperta | ✅ | dados públicos (RSC) da home, mais curtidas, 24 categorias e 24 lojas (8 por execução) |
 | Pelando | ✅ | dados públicos de `/recentes`, `/mais-quentes`, `/comentadas` e 8 comunidades `/c/` (3 por execução) |
 | Gatry | ✅ | HTML público de `/promocoes` |
 | Comparajogos | ✅ | maiores quedas de preço de jogos de tabuleiro (home) |
@@ -47,7 +47,7 @@ instalado e logado (`claude` no PATH; usa sua assinatura).
 git clone <este repositório> ofertas && cd ofertas
 python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                      # 138 testes, sem rede
+.venv/bin/pytest                      # 179 testes, sem rede
 ```
 
 ### Bot do Telegram
@@ -104,6 +104,16 @@ Logs estruturados (JSON por linha) também ficam em `logs/ofertas.log`.
 | `/pausar` / `/retomar` | para/volta a enviar (a coleta continua e o histórico segue crescendo) |
 | `/categorias` | botões para ligar/desligar categorias |
 | `/minimo` | mostra a nota mínima; `/minimo 75` muda |
+| `/quero air fryer` | lista de desejos: avisa com critério mais leve (menor preço, 10% abaixo da mediana ou 20% de desconto declarado; nota ≥ 65). `/quero` sozinho mostra a lista |
+| `/naoquero 2` | tira o item 2 (ou o termo) da lista de desejos |
+| `/silenciar iphone` | nunca avisa de ofertas com essas palavras (barra antes do Claude); `/silenciar` mostra a lista |
+| `/dessilenciar 1` | volta a avisar |
+| `/resumo` | enviadas hoje, uso do Claude e as que quase passaram |
+
+Em cada oferta, **👍 Boa / 👎 Não curti** guardam seu voto; os últimos 20 vão
+no prompt do Claude como exemplos do seu gosto. Às 21 h (`digest.hour`) chega
+o **resumo do dia** sozinho. Quando a fonte passa a listar uma oferta enviada
+como encerrada, a mensagem é editada para "❌ Oferta encerrada".
 
 Só o seu `TELEGRAM_CHAT_ID` é obedecido.
 
@@ -114,10 +124,17 @@ Todas as condições, configuráveis em `config.yaml`:
 1. **Preço** — com histórico (≥ 5 observações em 90 dias): ≥ 25% abaixo da
    mediana **ou** novo menor preço. Sem histórico: desconto declarado ≥ 40%; ou
    ≥ 30% com sinal da comunidade; ou post muito quente no Pelando (≥ 400°).
-   Nesse caso a mensagem vem marcada "histórico insuficiente".
-2. **Loja** na whitelist (`stores`), produto novo (não open box/usado).
+   Nesse caso a mensagem vem marcada "histórico insuficiente". KaBuM! sem
+   histórico exige 60% (o preço "de" dela é inflado). Termos do `/quero` usam
+   os limites mais leves de `criteria.wishlist`.
+2. **Loja** fora da blacklist (`stores`), produto novo (não open box/usado),
+   sem termo silenciado, oferta não encerrada na fonte.
 3. **Claude**: nota ≥ 80 (ou o valor de `/minimo`), não é desconto falso,
-   categoria ligada.
+   categoria ligada. Roupas, calçados e acessórios precisam de 8 pontos a
+   menos, jogos de tabuleiro de 10, esporte e brinquedos de 5
+   (`criteria.min_score_offsets`); marcas de `brands.favorites` (Nike,
+   Adidas, Hering, Galápagos, LEGO, Tramontina...) de mais 3, nunca abaixo
+   de 65.
 4. **Não repetida**: o mesmo produto não volta em 72 h, a não ser que o preço
    caia mais 5%. Variações de cor/modelo da mesma loja e mesmo preço viram uma
    mensagem só.
@@ -130,6 +147,9 @@ Gatry).
 Teto de `claude.daily_call_limit` (100) chamadas/dia; ao atingir, para e avisa
 uma vez no Telegram. Cada chamada avalia até 20 ofertas (~US$ 0,002 por lote
 de 5, pela estimativa do CLI) e o veredito fica em cache por oferta e preço.
+A fila vai em ordem de chance de dar nota boa: termos do `/quero`, depois
+ofertas com histórico real, depois com sinal da comunidade, e só então pelo
+desconto declarado.
 
 ## APIs oficiais (Amazon, Mercado Livre) — opcional, ainda não integradas
 

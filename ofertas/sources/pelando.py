@@ -48,8 +48,8 @@ class PelandoSource(Source):
 
 
 def _to_offer(d: dict) -> RawOffer | None:
-    if d.get("kind") != "promotion" or d.get("status") != "active":
-        return None  # coupons, expired deals
+    if d.get("kind") != "promotion" or d.get("status") not in ("active", "expired"):
+        return None  # coupons, deals under moderation
     price = d.get("price")
     if not price or price <= 1 or not d.get("title") or not d.get("slug"):
         return None
@@ -65,6 +65,7 @@ def _to_offer(d: dict) -> RawOffer | None:
         temperature=d.get("temperature"),
         image=d.get("imageUrl"),
         published_at=d.get("createdAt"),
+        ended=d.get("status") == "expired",
         extra={
             "comments": d.get("commentCount"),
             "cashback": d.get("cashback"),

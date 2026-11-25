@@ -98,6 +98,17 @@ MIGRATIONS: list[str] = [
     """,
     # v2: Claude's condition judgement (novo/usado/...)
     "ALTER TABLE verdicts ADD COLUMN condition TEXT",
+    # v3: what we sent (to edit it when the deal ends) and the user's 👍/👎
+    """
+    ALTER TABLE sent ADD COLUMN text TEXT;
+    ALTER TABLE sent ADD COLUMN photo INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE sent ADD COLUMN ended_at TEXT;
+    CREATE TABLE feedback (
+        offer_id INTEGER PRIMARY KEY REFERENCES offers(id),
+        vote INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    """,
 ]
 
 # A new price-history point is recorded when the price changes, or at most
@@ -223,13 +234,76 @@ class Storage:
             (_iso(since),),
         ).fetchall()
 
-    def mark_sent(self, offer: StoredOffer, message_id: int | None, now: datetime | None = None):
+    def recent_sent_names(self, since: datetime) -> list[sqlite3.Row]:
+        """Claude's normalised name and price of offers sent since `since`:
+        the same product posted again with another title/source/offer id."""
+        return self.conn.execute(
+            "SELECT v.name_norm, s.price FROM sent s JOIN verdicts v "
+            "ON v.offer_id = s.offer_id AND abs(v.price - s.price) < 0.01 "
+            "WHERE s.sent_at >= ? AND v.name_norm IS NOT NULL",
+            (_iso(since),),
+        ).fetchall()
+
+    def mark_sent(self, offer: StoredOffer, message_id: int | None, now: datetime | None = None,
+                  text: str | None = None, photo: bool = False):
         self.conn.execute(
-            "INSERT INTO sent (offer_id, product_key, url_canon, price, sent_at, message_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sent (offer_id, product_key, url_canon, price, sent_at, message_id, "
+            "text, photo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (offer.id, offer.product_key, offer.url_canon, offer.raw.price,
-             _iso(now or utcnow()), message_id),
+             _iso(now or utcnow()), message_id, text, int(photo)),
         )
+
+    def open_sent_for(self, keys: set[tuple[str, str]], since: datetime) -> list[sqlite3.Row]:
+        """Sent messages (not yet marked ended) for these (source, source_id)."""
+        if not keys:
+            return []
+        rows = self.conn.execute(
+            "SELECT s.id, s.offer_id, s.message_id, s.text, s.photo, o.source, o.source_id, o.url "
+            "FROM sent s JOIN offers o ON o.id = s.offer_id "
+            "WHERE s.ended_at IS NULL AND s.message_id IS NOT NULL AND s.text IS NOT NULL "
+            "AND s.sent_at >= ?", (_iso(since),),
+        ).fetchall()
+        return [r for r in rows if (r["source"], r["source_id"]) in keys]
+
+    def mark_ended(self, sent_id: int, now: datetime | None = None) -> None:
+        self.conn.execute("UPDATE sent SET ended_at = ? WHERE id = ?", (_iso(now or utcnow()), sent_id))
+
+    # -- user feedback (👍/👎) ----------------------------------------------
+    def set_feedback(self, offer_id: int, vote: int, now: datetime | None = None) -> None:
+        self.conn.execute(
+            "INSERT INTO feedback (offer_id, vote, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(offer_id) DO UPDATE SET vote = excluded.vote, created_at = excluded.created_at",
+            (offer_id, vote, _iso(now or utcnow())),
+        )
+
+    def recent_feedback(self, limit: int = 20) -> list[sqlite3.Row]:
+        """Latest votes with what Claude knew about the offer (for the prompt)."""
+        return self.conn.execute(
+            "SELECT f.vote, o.title, o.price, o.store, "
+            "(SELECT v.name_norm FROM verdicts v WHERE v.offer_id = o.id ORDER BY v.id DESC LIMIT 1) name_norm, "
+            "(SELECT v.category FROM verdicts v WHERE v.offer_id = o.id ORDER BY v.id DESC LIMIT 1) category, "
+            "(SELECT v.score FROM verdicts v WHERE v.offer_id = o.id ORDER BY v.id DESC LIMIT 1) score "
+            "FROM feedback f JOIN offers o ON o.id = f.offer_id ORDER BY f.created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+    def near_misses(self, since: datetime, lo: int, hi: int, limit: int = 5) -> list[sqlite3.Row]:
+        """Best offers Claude judged in [lo, hi) since `since`, not fake, not sent."""
+        return self.conn.execute(
+            "SELECT v.name_norm, MAX(v.score) score, o.price, o.store, o.url, o.title "
+            "FROM verdicts v JOIN offers o ON o.id = v.offer_id "
+            "WHERE v.created_at >= ? AND v.score >= ? AND v.score < ? AND NOT v.is_fake "
+            "AND COALESCE(v.condition, '') NOT IN ('usado', 'recondicionado') "
+            "AND abs(o.price - v.price) < 0.01 "
+            "AND o.id NOT IN (SELECT offer_id FROM sent) "
+            "GROUP BY v.name_norm ORDER BY score DESC, o.price ASC LIMIT ?",
+            (_iso(since), lo, hi, limit),
+        ).fetchall()
+
+    def sent_count(self, since: datetime) -> int:
+        return self.conn.execute(
+            "SELECT COUNT(*) FROM sent WHERE sent_at >= ?", (_iso(since),)
+        ).fetchone()[0]
 
     # -- source health ----------------------------------------------------
     def source_ok(self, source: str, now: datetime | None = None) -> bool:

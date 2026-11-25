@@ -9,10 +9,11 @@ Two phases, so Claude is only asked about offers worth asking about:
 
 from __future__ import annotations
 
+import re
 import statistics
 
 from ofertas.models import Decision, PriceStats, RawOffer, Verdict
-from ofertas.normalize import normalize_store
+from ofertas.normalize import normalize_store, strip_accents
 
 
 def store_allowed(store: str | None, stores_cfg: dict) -> bool:
@@ -20,8 +21,19 @@ def store_allowed(store: str | None, stores_cfg: dict) -> bool:
     if stores_cfg["mode"] == "whitelist":
         allowed = {normalize_store(s) for s in stores_cfg.get("whitelist") or []}
         return norm in allowed
-    blocked = {normalize_store(s) for s in stores_cfg.get("blacklist") or []}
-    return norm not in blocked
+    if norm is None:
+        return True  # unknown store: Claude judges it
+    blacklist = stores_cfg.get("blacklist") or []
+    if norm in {normalize_store(s) for s in blacklist}:
+        return False
+    # "EA" also blocks "EA Games"/"EA App": the store's first words are a
+    # blacklisted name (word by word, so "Eataly" is not "EA").
+    words = _words(store)
+    return not any((bw := _words(b)) and words[:len(bw)] == bw for b in blacklist)
+
+
+def _words(s: str) -> list[str]:
+    return re.sub(r"[^a-z0-9]+", " ", strip_accents(s).lower()).split()
 
 
 def community_cfg(offer: RawOffer, fallback_cfg: dict) -> dict:
@@ -124,6 +136,40 @@ def _fallback(offer: RawOffer, fb: dict, reasons: list[str], stats: PriceStats) 
     return False
 
 
+_DISCOUNT_KEYS = ("min_declared_discount_alone", "min_declared_discount")
+
+
+def wish_cfg(criteria_cfg: dict, wish: dict) -> dict:
+    """Criteria for an offer on the user's /quero list (pure): a real but
+    smaller price signal is enough. Per-source discount overrides are dropped
+    (they exist to be stricter, e.g. KaBuM!), community scales are kept."""
+    fb = dict(criteria_cfg["fallback"])
+    fb["min_declared_discount_alone"] = wish.get("min_declared_discount", 0.20)
+    fb["per_source"] = {
+        src: {k: v for k, v in o.items() if k not in _DISCOUNT_KEYS}
+        for src, o in (fb.get("per_source") or {}).items()
+    }
+    return {
+        **criteria_cfg,
+        "min_discount_vs_median": wish.get("min_discount_vs_median", 0.10),
+        "min_history_points": wish.get("min_history_points", 3),
+        "fallback": fb,
+    }
+
+
+def required_score(base: int, category: str | None, brand: bool, criteria_cfg: dict,
+                   brand_offset: int = 0, wish_score: int | None = None) -> int:
+    """Minimum Claude score for one offer (pure): the global minimum adjusted
+    by category and favourite brand, never below the floor; a /quero match
+    uses the wishlist minimum when that is lower."""
+    offset = (criteria_cfg.get("min_score_offsets") or {}).get(category, 0)
+    if brand:
+        offset += brand_offset
+    floor = int(criteria_cfg.get("min_score_floor", 65))
+    need = max(min(base, floor), base + offset)
+    return min(need, wish_score) if wish_score is not None else need
+
+
 def with_verdict(
     decision: Decision,
     verdict: Verdict | None,
@@ -135,7 +181,8 @@ def with_verdict(
     if verdict is None:
         return Decision(ok=False, reasons=reasons + ["aguardando avaliação do Claude"],
                         insufficient_history=decision.insufficient_history, pending=decision.ok,
-                        stats=decision.stats)
+                        stats=decision.stats, wish=decision.wish,
+                        brand=decision.brand)
     ok = decision.ok
     if verdict.fake:
         ok = False
@@ -152,4 +199,5 @@ def with_verdict(
     else:
         reasons.append(f"nota {verdict.score}")
     return Decision(ok=ok, reasons=reasons, insufficient_history=decision.insufficient_history,
-                    verdict=verdict, stats=decision.stats)
+                    verdict=verdict, stats=decision.stats, wish=decision.wish,
+                        brand=decision.brand)

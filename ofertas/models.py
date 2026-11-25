@@ -21,6 +21,10 @@ class RawOffer:
     image: str | None = None
     published_at: str | None = None
     extra: dict = field(default_factory=dict)
+    # The source says the deal is over (Promobit FINISHED, Pelando expired,
+    # Oferta Esperta encerrada). Never judged or sent; used to mark messages
+    # we already sent as ended.
+    ended: bool = False
 
     @property
     def declared_discount(self) -> float | None:
@@ -76,3 +80,5 @@ class Decision:
     pending: bool = False  # waiting for a Claude verdict
     stats: PriceStats | None = None
     variants: list[str] = field(default_factory=list)  # sibling listings folded into this one
+    wish: str | None = None  # /quero term this offer matched (lighter criterion)
+    brand: str | None = None  # favourite brand matched (queue priority, score offset)

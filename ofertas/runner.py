@@ -9,25 +9,27 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Protocol
 
-from ofertas import criteria
+from ofertas import criteria, prefs
 from ofertas.config import Config
 from ofertas.bot import enabled_categories
 from ofertas.bot import min_score as bot_min_score
 from ofertas.dedupe import is_duplicate
+from ofertas.digest import digest_text
 from ofertas.http import BlockedError, PoliteClient
 from ofertas.models import Decision, RawOffer, StoredOffer
 from ofertas.normalize import normalize_store, product_key, same_family
-from ofertas.notify import format_offer
+from ofertas.notify import SentMessage, format_offer
 from ofertas.sources import REGISTRY
 from ofertas.storage import Storage, utcnow
-from ofertas.triage import Triage
+from ofertas.triage import Triage, feedback_payload
 
 log = logging.getLogger(__name__)
 
 
 class Notifier(Protocol):
     def send_text(self, text: str, button: tuple[str, str] | None = None) -> int: ...
-    def send_offer(self, offer: StoredOffer, decision: Decision) -> int: ...
+    def send_offer(self, offer: StoredOffer, decision: Decision) -> SentMessage: ...
+    def close_offer(self, message_id: int, text: str, photo: bool, url: str, offer_id: int) -> None: ...
 
 
 class ConsoleNotifier:
@@ -40,8 +42,13 @@ class ConsoleNotifier:
         self.out("\n" + _strip_html(text) + (f"\n[{button[0]}] {button[1]}" if button else ""))
         return 0
 
-    def send_offer(self, offer: StoredOffer, decision: Decision) -> int:
-        return self.send_text(format_offer(offer, decision), ("Abrir oferta", offer.raw.url))
+    def send_offer(self, offer: StoredOffer, decision: Decision) -> SentMessage:
+        text = format_offer(offer, decision)
+        self.send_text(text, ("Abrir oferta", offer.raw.url))
+        return SentMessage(0, text, photo=False)
+
+    def close_offer(self, message_id, text, photo, url, offer_id) -> None:
+        self.out(f"\n[encerrada] mensagem {message_id}: {url}")
 
 
 def _strip_html(text: str) -> str:
@@ -56,6 +63,7 @@ class RunReport:
     failed: dict[str, str] = field(default_factory=dict)
     evaluated: list[tuple[StoredOffer, Decision]] = field(default_factory=list)
     sent: list[StoredOffer] = field(default_factory=list)
+    closed: int = 0  # sent messages marked as ended this run
 
 
 @contextmanager
@@ -121,11 +129,24 @@ def judge(
     if not cfg.get("claude.enabled", False):
         return pre
     min_score = bot_min_score(cfg, storage)  # /minimo overrides config
+    wish_score = min(min_score, int(cfg.get("criteria.wishlist.min_score", 65)))
     enabled = enabled_categories(cfg, storage)  # /categorias overrides config
+    ccfg = cfg.get("criteria")
+    fb = criteria_fallback(cfg)
 
     need = [(off, d) for off, d in pre if d.ok and storage.get_verdict(off.id, off.raw.price) is None]
+    # Budget goes first where a good verdict is likeliest: the user's /quero
+    # terms, favourite brands, then real price history, then community signal, then the
+    # declared discount (stores inflate it: KaBuM! is mostly fake at 40-59%).
+    need.sort(key=lambda p: (
+        p[1].wish is not None, p[1].brand is not None, not p[1].insufficient_history,
+        criteria.community_ok(p[0].raw, fb), p[0].raw.declared_discount or 0,
+    ), reverse=True)
     if need and triage is not None:
-        fresh = triage.judge([o for o, _ in need], stats={o.id: d.stats for o, d in need})
+        n_fb = int(cfg.get("claude.feedback_examples", 20))
+        feedback = feedback_payload(storage.recent_feedback(n_fb)) if n_fb else None
+        fresh = triage.judge([o for o, _ in need], stats={o.id: d.stats for o, d in need},
+                             feedback=feedback)
         with _tx(storage):
             for off, _ in need:
                 if off.id in fresh:
@@ -136,8 +157,55 @@ def judge(
             out.append((off, d))
             continue
         v = storage.get_verdict(off.id, off.raw.price)
-        out.append((off, criteria.with_verdict(d, v, min_score, enabled)))
+        need_score = min_score if v is None else criteria.required_score(
+            min_score, v.category, d.brand is not None, ccfg,
+            brand_offset=int(cfg.get("brands.score_offset", 0)),
+            wish_score=wish_score if d.wish else None)
+        out.append((off, criteria.with_verdict(d, v, need_score, enabled)))
     return out
+
+
+def criteria_fallback(cfg: Config) -> dict:
+    return cfg.get("criteria")["fallback"]
+
+
+def close_ended(cfg: Config, storage: Storage, notifier: Notifier, ended: list[RawOffer],
+                now: datetime) -> int:
+    """Edits messages we sent for deals the source now lists as ended."""
+    keys = {(r.source, r.source_id) for r in ended}
+    since = now - timedelta(days=cfg.get("ended.window_days", 7))
+    closed = 0
+    for row in storage.open_sent_for(keys, since):
+        try:
+            notifier.close_offer(row["message_id"], row["text"], bool(row["photo"]),
+                                 row["url"], row["offer_id"])
+        except Exception as exc:  # message too old/deleted: don't retry forever
+            log.warning("close_failed", extra={"sent_id": row["id"], "error": str(exc)})
+        with _tx(storage):
+            storage.mark_ended(row["id"], now)
+        closed += 1
+        log.info("offer_closed", extra={"offer_id": row["offer_id"], "url": row["url"]})
+    return closed
+
+
+def maybe_digest(cfg: Config, storage: Storage, notifier: Notifier, now: datetime) -> bool:
+    """Once a day, after digest.hour local time."""
+    if not cfg.get("digest.enabled", True) or storage.get_setting("paused") == "1":
+        return False
+    local = now.astimezone()
+    if local.hour < int(cfg.get("digest.hour", 21)):
+        return False
+    day = local.date().isoformat()
+    if storage.get_setting("digest_day") == day:
+        return False
+    with _tx(storage):
+        storage.set_setting("digest_day", day)
+    _safe_send(notifier, digest_text(
+        storage, bot_min_score(cfg, storage), storage.claude_calls(local.date()),
+        cfg.get("claude.daily_call_limit", 100), now,
+        band=cfg.get("digest.near_miss_band", 20), max_items=cfg.get("digest.max_items", 5),
+    ))
+    return True
 
 
 def run(
@@ -155,6 +223,9 @@ def run(
     now = now or utcnow()
     report = RunReport()
     raws = collect(cfg, client, storage, notifier, report, only_source)
+    ended = [r for r in raws if r.ended]
+    raws = [r for r in raws if not r.ended]
+    report.closed = close_ended(cfg, storage, notifier, ended, now)
     with _tx(storage):
         stored = [storage.upsert_offer(r, now) for r in raws]
 
@@ -165,6 +236,9 @@ def run(
     pre: list[tuple[StoredOffer, Decision]] = []
     seen_keys: set[str] = set()
     since = now - timedelta(days=ccfg.get("history_days", 90))
+    wishes, muted = prefs.get_terms(storage, prefs.WISHLIST), prefs.get_terms(storage, prefs.MUTED)
+    wcfg = criteria.wish_cfg(ccfg, ccfg.get("wishlist") or {})
+    brands = list(cfg.get("brands.favorites") or [])
     for off in stored:
         dup, why = is_duplicate(
             storage, off, ccfg["resend_window_hours"], ccfg["resend_min_drop"], now
@@ -172,7 +246,15 @@ def run(
         if not dup and off.product_key in seen_keys:
             dup, why = True, "repetida em outra fonte nesta execução"
         history = storage.price_history(off.product_key, since, before=now)
-        d = criteria.objective(off.raw, ccfg, scfg, duplicate_reason=why, history=history)
+        mute = prefs.first_match(muted, off.raw.title)
+        wish = None if mute else prefs.first_match(wishes, off.raw.title)
+        d = criteria.objective(off.raw, wcfg if wish else ccfg, scfg,
+                               duplicate_reason=why, history=history)
+        d.wish = wish
+        d.brand = prefs.first_match(brands, f"{off.raw.title} {off.raw.store or ''}")
+        if mute:
+            d.ok = False
+            d.reasons.append(f"silenciado: {mute}")
         if d.ok:
             seen_keys.add(off.product_key)
         pre.append((off, d))
@@ -189,6 +271,11 @@ def run(
         passing = []
     window = now - timedelta(hours=ccfg["resend_window_hours"])
     family = [(r["product_key"], r["store_norm"], r["price"]) for r in storage.recent_sent(window)]
+    sent_before: dict[str, float] = {}  # product_key(name_norm) -> lowest price sent in the window
+    for r in storage.recent_sent_names(window):
+        k = product_key(r["name_norm"])
+        sent_before[k] = min(r["price"], sent_before.get(k, r["price"]))
+    min_drop = ccfg["resend_min_drop"]
     heads: list[tuple[StoredOffer, Decision]] = []
     sent_names: set[str] = set()
     for off, decision in passing:
@@ -196,6 +283,11 @@ def run(
         # normalised name catches what the title-based product_key misses.
         name = product_key(decision.verdict.name_norm) if decision.verdict else off.product_key
         if name in sent_names:
+            continue
+        # ...and across runs: a re-post of something already sent (new offer
+        # id, other title) waits for the same price-drop rule as the dedupe.
+        if name in sent_before and off.raw.price > sent_before[name] * (1 - min_drop):
+            log.info("name_dup_skip", extra={"offer_id": off.id, "name": name})
             continue
         # Colour/model variants of one listing (KaBuM! lists each colour as a
         # product): fold into the first one, here or sent in the dedupe window.
@@ -213,19 +305,22 @@ def run(
         if len(report.sent) >= cap:
             break
         try:
-            msg_id = notifier.send_offer(off, decision)
+            msg = notifier.send_offer(off, decision)
         except Exception as exc:
             log.error("send_failed", extra={"offer_id": off.id, "error": str(exc)})
             continue
         with _tx(storage):
-            storage.mark_sent(off, msg_id, now)
+            storage.mark_sent(off, msg.message_id, now, text=msg.text, photo=msg.photo)
         report.sent.append(off)
         log.info("offer_sent", extra={"offer_id": off.id, "title": off.raw.title,
                                       "price": off.raw.price, "source": off.raw.source,
                                       "dry_run": dry_run})
+    if not dry_run and not only_source:
+        maybe_digest(cfg, storage, notifier, now)
     log.info("run_done", extra={
         "collected": report.collected, "failed": list(report.failed),
-        "evaluated": len(report.evaluated), "sent": len(report.sent), "dry_run": dry_run,
+        "evaluated": len(report.evaluated), "sent": len(report.sent),
+        "closed": report.closed, "ended_seen": len(ended), "dry_run": dry_run,
     })
     return report
 

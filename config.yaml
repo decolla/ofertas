@@ -18,10 +18,10 @@ sources:
     urls:
       - https://www.promobit.com.br/promocoes/recentes/
       - https://www.promobit.com.br/
-    # Páginas de categoria e de tag (/s/) em rodízio: 10 por execução, cada uma
-    # lida a cada ~7 execuções (~2h20), para não martelar o site. A paginação
-    # (?page=2) é ignorada pelo site: só categorias trazem ofertas a mais.
-    rotate_per_run: 10
+    # Páginas de categoria, de tag (/s/) e de loja em rodízio: 14 por execução,
+    # cada uma lida a cada ~8 execuções (~2h40), para não martelar o site. A
+    # paginação (?page=2) é ignorada pelo site: só estas páginas trazem mais.
+    rotate_per_run: 14
     rotate_urls:
       - https://www.promobit.com.br/promocoes/informatica/
       - https://www.promobit.com.br/promocoes/smartphones-tablets-e-telefones/
@@ -101,6 +101,46 @@ sources:
       - https://www.promobit.com.br/promocoes/toalha-de-banho/s/
       - https://www.promobit.com.br/promocoes/ferramentas/s/
       - https://www.promobit.com.br/promocoes/robo-aspirador/s/
+      # lojas (/promocoes/loja/<loja>/): cobre as lojas que bloqueiam robôs
+      # (Netshoes, Centauro, Nike, Magalu, Drogasil, Pichau...) sem tocar nelas
+      - https://www.promobit.com.br/promocoes/loja/adidas/
+      - https://www.promobit.com.br/promocoes/loja/amazon/
+      - https://www.promobit.com.br/promocoes/loja/americanas/
+      - https://www.promobit.com.br/promocoes/loja/asics/
+      - https://www.promobit.com.br/promocoes/loja/beleza-na-web/
+      - https://www.promobit.com.br/promocoes/loja/boticario/
+      - https://www.promobit.com.br/promocoes/loja/carrefour/
+      - https://www.promobit.com.br/promocoes/loja/casas-bahia/
+      - https://www.promobit.com.br/promocoes/loja/centauro/
+      - https://www.promobit.com.br/promocoes/loja/cobasi/
+      - https://www.promobit.com.br/promocoes/loja/dafiti/
+      - https://www.promobit.com.br/promocoes/loja/decathlon/
+      - https://www.promobit.com.br/promocoes/loja/droga-raia/
+      - https://www.promobit.com.br/promocoes/loja/drogasil/
+      - https://www.promobit.com.br/promocoes/loja/epoca-cosmeticos/
+      - https://www.promobit.com.br/promocoes/loja/havaianas/
+      - https://www.promobit.com.br/promocoes/loja/hering/
+      - https://www.promobit.com.br/promocoes/loja/lacoste/
+      - https://www.promobit.com.br/promocoes/loja/leroy-merlin/
+      - https://www.promobit.com.br/promocoes/loja/lojas-renner/
+      - https://www.promobit.com.br/promocoes/loja/madeiramadeira/
+      - https://www.promobit.com.br/promocoes/loja/magazine-luiza/
+      - https://www.promobit.com.br/promocoes/loja/mercado-livre/
+      - https://www.promobit.com.br/promocoes/loja/mizuno/
+      - https://www.promobit.com.br/promocoes/loja/mobly/
+      - https://www.promobit.com.br/promocoes/loja/natura/
+      - https://www.promobit.com.br/promocoes/loja/netshoes/
+      - https://www.promobit.com.br/promocoes/loja/new-balance/
+      - https://www.promobit.com.br/promocoes/loja/nike/
+      - https://www.promobit.com.br/promocoes/loja/petz/
+      - https://www.promobit.com.br/promocoes/loja/pichau/
+      - https://www.promobit.com.br/promocoes/loja/ponto-frio/
+      - https://www.promobit.com.br/promocoes/loja/puma/
+      - https://www.promobit.com.br/promocoes/loja/reserva/
+      - https://www.promobit.com.br/promocoes/loja/riachuelo/
+      - https://www.promobit.com.br/promocoes/loja/sephora/
+      - https://www.promobit.com.br/promocoes/loja/terabyteshop/
+      - https://www.promobit.com.br/promocoes/loja/zattini/
   pechinchou:
     enabled: true
     urls:
@@ -136,7 +176,7 @@ sources:
     urls:
       - https://www.ofertaesperta.com/
       - https://www.ofertaesperta.com/?sort=curtidas
-    rotate_per_run: 5      # 24 categorias: cada uma a cada ~1h40
+    rotate_per_run: 8      # 24 categorias + 24 lojas: cada página a cada ~2 h
     rotate_urls:
       - https://www.ofertaesperta.com/categoria/alimentos-e-bebidas
       - https://www.ofertaesperta.com/categoria/ar-e-climatizacao
@@ -162,6 +202,31 @@ sources:
       - https://www.ofertaesperta.com/categoria/smartphones-e-tablets
       - https://www.ofertaesperta.com/categoria/suplementos-e-nutricao
       - https://www.ofertaesperta.com/categoria/tv-e-video
+      # lojas (/loja/<loja>)
+      - https://www.ofertaesperta.com/loja/adidas
+      - https://www.ofertaesperta.com/loja/amazon
+      - https://www.ofertaesperta.com/loja/americanas
+      - https://www.ofertaesperta.com/loja/beleza-na-web
+      - https://www.ofertaesperta.com/loja/boticario
+      - https://www.ofertaesperta.com/loja/carrefour
+      - https://www.ofertaesperta.com/loja/casas-bahia
+      - https://www.ofertaesperta.com/loja/centauro
+      - https://www.ofertaesperta.com/loja/dafiti
+      - https://www.ofertaesperta.com/loja/decathlon
+      - https://www.ofertaesperta.com/loja/epoca-cosmeticos
+      - https://www.ofertaesperta.com/loja/lojas-renner
+      - https://www.ofertaesperta.com/loja/magazine-luiza
+      - https://www.ofertaesperta.com/loja/mercado-livre
+      - https://www.ofertaesperta.com/loja/mobly
+      - https://www.ofertaesperta.com/loja/natura
+      - https://www.ofertaesperta.com/loja/netshoes
+      - https://www.ofertaesperta.com/loja/nike
+      - https://www.ofertaesperta.com/loja/olympikus
+      - https://www.ofertaesperta.com/loja/pichau
+      - https://www.ofertaesperta.com/loja/ponto-frio
+      - https://www.ofertaesperta.com/loja/riachuelo
+      - https://www.ofertaesperta.com/loja/sephora
+      - https://www.ofertaesperta.com/loja/zattini
   pelando:
     enabled: true
     urls:
@@ -252,11 +317,117 @@ criteria:
     per_source:            # escalas de comunidade diferem por fonte
       comparajogos:                # preço anterior é histórico real, não preço "de"
         min_declared_discount_alone: 0.25
+      # Sem comunidade e com preço "de" inflado: de 52 vereditos entre 40% e
+      # 59% de desconto declarado, nenhum teve nota >= 80 (2026-11-24).
+      # Com histórico próprio suficiente vale a regra da mediana, não esta.
+      kabum:
+        min_declared_discount_alone: 0.60
       pelando:
         min_votes: null
         min_temperature: 150       # graus do Pelando
         min_temperature_alone: 400 # tão quente que vai ao Claude mesmo sem preço "de"
   max_notifications_per_run: 5
+  # Nota mínima por categoria, relativa à global (min_score ou /minimo). O
+  # Claude é conservador com roupa/tênis/jogos (conhece menos o preço típico):
+  # em 2 dias, Lacoste a R$ 161, Air Jordan 4 a R$ 479 e Great Western Trail
+  # a R$ 104 ficaram em 76-78 e não chegaram.
+  min_score_offsets:
+    moda: -8
+    calcados: -8
+    acessorios: -8
+    jogos_tabuleiro: -10
+    esporte: -5
+    brinquedos: -5
+  min_score_floor: 65      # nenhum ajuste (categoria, marca) desce abaixo disto
+  # /quero <termo>: ofertas com essas palavras passam com sinal de preço menor
+  # (e vão primeiro para o Claude). /silenciar barra antes do Claude.
+  wishlist:
+    min_discount_vs_median: 0.10   # com histórico: 10% abaixo da mediana ou menor preço
+    min_history_points: 3
+    min_declared_discount: 0.20    # sem histórico: desconto declarado
+    min_score: 65                  # nota mínima (ou /minimo, se for menor)
+
+# Marcas que o usuário curte: vão antes na fila do Claude e precisam de uma
+# nota um pouco menor (score_offset). Casam pelo título ou pela loja, com
+# todas as palavras, sem acento (como o /quero).
+brands:
+  score_offset: -3
+  favorites:
+    # roupas e calçados
+    - Nike
+    - Adidas
+    - Puma
+    - Mizuno
+    - Asics
+    - Olympikus
+    - Fila
+    - New Balance
+    - Vans
+    - Converse
+    - Lacoste
+    - Reserva
+    - Hering
+    - Insider
+    - Osklen
+    - Farm
+    - Havaianas
+    - Melissa
+    - Arezzo
+    - Schutz
+    - Lupo
+    - Track Field
+    - Levi's
+    - Tommy Hilfiger
+    - Calvin Klein
+    - Under Armour
+    - Oakley
+    # jogos de tabuleiro e brinquedos
+    - Galápagos
+    - Devir
+    - Grok
+    - Conclave
+    - Ludofy
+    - PaperGames
+    - Meeple BR
+    - Copag
+    - Estrela
+    - Grow
+    - Hasbro
+    - LEGO
+    - Mattel
+    # casa e cozinha
+    - Tramontina
+    - Stanley
+    - Electrolux
+    - Brastemp
+    - Consul
+    - Mondial
+    - Oster
+    - Arno
+    - Walita
+    - Britânia
+    - Brinox
+    - Rochedo
+    - WAP
+    # beleza
+    - Natura
+    - Boticário
+    - Eudora
+    - Granado
+    - CeraVe
+    - La Roche-Posay
+
+# Resumo diário no Telegram (enviadas, uso do Claude e o que quase passou).
+digest:
+  enabled: true
+  hour: 21               # hora local; vai na 1ª execução depois dela
+  near_miss_band: 20     # "quase passou" = nota entre min_score-20 e min_score
+  max_items: 5
+
+# Oferta enviada que a fonte passa a listar como encerrada: a mensagem é
+# editada ("❌ Oferta encerrada"). Só olha envios destes últimos dias.
+ended:
+  window_days: 7
 
 claude:
   enabled: true
@@ -265,7 +436,8 @@ claude:
   batch_size: 20
   max_batches_per_run: 3   # backlog grande (1ª execução) é diluído em várias execuções
   timeout_seconds: 180
-  daily_call_limit: 100
+  daily_call_limit: 130   # Black Friday (antes 100); cada chamada avalia até 20 ofertas
+  feedback_examples: 20    # últimos 👍/👎 do usuário enviados no prompt (0 desliga)
 
 health:
   alert_after_failures: 5  # falhas seguidas de uma fonte antes de avisar no Telegram

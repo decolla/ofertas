@@ -79,8 +79,14 @@ class FakeTelegram:
         return len(self.texts)
 
     def send_offer(self, offer, decision):
+        from ofertas.notify import SentMessage
+
         self.offers.append(offer)
-        return 100 + len(self.offers)
+        self.decisions = [*getattr(self, "decisions", []), decision]
+        return SentMessage(100 + len(self.offers), f"msg {offer.raw.title}", photo=False)
+
+    def close_offer(self, message_id, text, photo, url, offer_id):
+        self.closed = [*getattr(self, "closed", []), message_id]
 
 
 def promobit_with(**overrides) -> str:
@@ -306,16 +312,20 @@ OK = {"ok": True, "result": {"message_id": 7}}
 
 def test_offer_with_image_goes_as_photo_with_caption_and_button():
     tg, calls = tg_with({"sendPhoto": OK})
-    assert tg.send_offer(stored("https://img/x.jpg"), Decision(ok=True)) == 7
+    msg = tg.send_offer(stored("https://img/x.jpg"), Decision(ok=True))
+    assert msg.message_id == 7 and msg.photo and "Mouse" in msg.text
     (method, body), = calls
     assert method == "sendPhoto" and body["photo"] == "https://img/x.jpg"
-    assert "Mouse" in body["caption"] and body["reply_markup"]["inline_keyboard"][0][0]["url"] == "https://loja/x"
+    keyboard = body["reply_markup"]["inline_keyboard"]
+    assert "Mouse" in body["caption"] and keyboard[0][0]["url"] == "https://loja/x"
+    assert [b["callback_data"] for b in keyboard[1]] == ["fb:1:1", "fb:1:-1"]
 
 
 def test_photo_rejected_falls_back_to_text():
     tg, calls = tg_with({"sendPhoto": {"ok": False, "description": "wrong type of the web page content"},
                          "sendMessage": OK})
-    assert tg.send_offer(stored("https://img/x.webp"), Decision(ok=True)) == 7
+    msg = tg.send_offer(stored("https://img/x.webp"), Decision(ok=True))
+    assert msg.message_id == 7 and not msg.photo
     assert [m for m, _ in calls] == ["sendPhoto", "sendMessage"]
 
 

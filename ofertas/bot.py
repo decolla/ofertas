@@ -13,9 +13,13 @@ import logging
 import time
 from datetime import date, timedelta
 
+import html
+import re
+
+from ofertas import prefs
 from ofertas.categories import CATEGORY_LABELS
 from ofertas.config import Config
-from ofertas.notify import Telegram
+from ofertas.notify import Telegram, feedback_row
 from ofertas.storage import Storage, utcnow
 from ofertas.triage import CATEGORIES
 
@@ -28,6 +32,11 @@ COMMANDS = [
     ("retomar", "Retomar os avisos"),
     ("categorias", "Escolher categorias"),
     ("minimo", "Ver ou mudar a nota mínima (ex.: /minimo 75)"),
+    ("quero", "Lista de desejos (ex.: /quero air fryer)"),
+    ("naoquero", "Tirar da lista de desejos (ex.: /naoquero 2)"),
+    ("silenciar", "Nunca avisar de algo (ex.: /silenciar iphone)"),
+    ("dessilenciar", "Voltar a avisar (ex.: /dessilenciar 1)"),
+    ("resumo", "Resumo do dia e o que quase passou"),
     ("ajuda", "Ajuda"),
 ]
 
@@ -38,8 +47,37 @@ HELP = (
     "/retomar — volta a enviar\n"
     "/categorias — liga/desliga categorias\n"
     "/minimo — mostra a nota mínima do Claude; /minimo 75 muda para 75\n"
-    "/ajuda — esta mensagem"
+    "/quero air fryer — avisa de air fryer com critério mais leve "
+    "(menor preço ou desconto menor já bastam); /quero sozinho mostra a lista\n"
+    "/naoquero 2 — tira o item 2 (ou o termo) da lista\n"
+    "/silenciar iphone — nunca avisa de ofertas com essas palavras; "
+    "/silenciar sozinho mostra a lista\n"
+    "/dessilenciar 1 — volta a avisar\n"
+    "/resumo — enviadas hoje e as que quase passaram\n"
+    "/ajuda — esta mensagem\n\n"
+    "Em cada oferta, 👍/👎 ensinam o seu gosto ao Claude."
 )
+
+
+_FEEDBACK = re.compile(r"fb:(\d+):(1|-1)")
+_LISTS = {
+    "/quero": (prefs.WISHLIST, "add"), "/naoquero": (prefs.WISHLIST, "remove"),
+    "/silenciar": (prefs.MUTED, "add"), "/dessilenciar": (prefs.MUTED, "remove"),
+}
+
+
+def list_text(db: Storage, key: str) -> str:
+    terms = prefs.get_terms(db, key)
+    if key == prefs.WISHLIST:
+        title, empty = "💛 <b>Lista de desejos</b>", "Vazia. Ex.: /quero air fryer"
+        hint = "Para tirar: /naoquero 1"
+    else:
+        title, empty = "🔇 <b>Silenciados</b>", "Nada silenciado. Ex.: /silenciar iphone"
+        hint = "Para voltar a avisar: /dessilenciar 1"
+    if not terms:
+        return f"{title}\n{empty}"
+    items = "\n".join(f"{i}. {html.escape(t)}" for i, t in enumerate(terms, 1))
+    return f"{title}\n{items}\n\n{hint}"
 
 
 def enabled_categories(cfg: Config, db: Storage) -> list[str]:
@@ -97,6 +135,23 @@ def handle_update(update: dict, cfg: Config, db: Storage, tg: Telegram) -> None:
             log.warning("ignored_chat", extra={"chat": chat})
             return
         data = cq.get("data") or ""
+        fb = _FEEDBACK.fullmatch(data)
+        if fb:
+            offer_id, vote = int(fb.group(1)), int(fb.group(2))
+            if db.conn.execute("SELECT 1 FROM offers WHERE id = ?", (offer_id,)).fetchone():
+                db.set_feedback(offer_id, vote)
+                markup = cq.get("message", {}).get("reply_markup") or {"inline_keyboard": []}
+                rows = [r for r in markup.get("inline_keyboard", [])
+                        if not any(str(b.get("callback_data", "")).startswith("fb:") for b in r)]
+                tg.call("editMessageReplyMarkup", {
+                    "chat_id": allowed, "message_id": cq["message"]["message_id"],
+                    "reply_markup": {"inline_keyboard": [*rows, feedback_row(offer_id, vote)]},
+                })
+            tg.call("answerCallbackQuery", {
+                "callback_query_id": cq["id"],
+                "text": "Anotado: vou mandar mais assim 👍" if vote > 0 else "Anotado: menos disso 👎",
+            })
+            return
         if data.startswith("cat:") and data[4:] in CATEGORIES:
             cats = enabled_categories(cfg, db)
             c = data[4:]
@@ -145,6 +200,31 @@ def handle_update(update: dict, cfg: Config, db: Storage, tg: Telegram) -> None:
             tg.send_text("Use um número de 0 a 100, ex.: /minimo 75")
     elif cmd == "/status":
         tg.send_text(status_text(cfg, db))
+    elif cmd in _LISTS:
+        key, verb = _LISTS[cmd]
+        arg = " ".join(args)
+        if not arg:
+            tg.send_text(list_text(db, key))
+        elif verb == "add":
+            ok, term = prefs.add_term(db, key, arg)
+            if not ok:
+                tg.send_text(term)
+            elif key == prefs.WISHLIST:
+                tg.send_text(f"💛 “{html.escape(term)}” na lista de desejos. Aviso quando aparecer "
+                             "com menor preço ou desconto real, mesmo sem ser preço de banana.")
+            else:
+                tg.send_text(f"🔇 Não aviso mais de ofertas com “{html.escape(term)}”.")
+        else:
+            removed = prefs.remove_term(db, key, arg)
+            tg.send_text(f"✅ Removido: “{html.escape(removed)}”." if removed
+                         else "Não achei esse item. " + list_text(db, key))
+    elif cmd == "/resumo":
+        from ofertas.digest import digest_text
+
+        tg.send_text(digest_text(db, min_score(cfg, db), db.claude_calls(date.today()),
+                                 cfg.get("claude.daily_call_limit", 100), utcnow(),
+                                 band=cfg.get("digest.near_miss_band", 20),
+                                 max_items=cfg.get("digest.max_items", 5)))
     else:
         tg.send_text("Comando desconhecido. /ajuda")
 

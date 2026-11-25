@@ -77,6 +77,7 @@ def _to_offer(it: dict) -> RawOffer | None:
         temperature=it.get("offerEngagementScore"),
         image=photo_url(photo),
         published_at=it.get("offerPublished"),
+        ended=it.get("offerStatusName") == "FINISHED",
         extra={
             "status": it.get("offerStatusName"),
             "comments": it.get("offerComments"),
