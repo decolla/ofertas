@@ -26,6 +26,8 @@ fontes (sem LLM) ──► SQLite (ofertas, histórico, enviadas)
 | Gatry | ✅ | HTML público de `/promocoes` |
 | Comparajogos | ✅ | maiores quedas de preço de jogos de tabuleiro (home) |
 | KaBuM! | ✅ | páginas de campanha `/ofertas/<slug>`, descobertas na home |
+| Olympikus | ✅ | loja oficial (VTEX): Black Friday por maior desconto (2 páginas) e acessórios |
+| Reserva | ✅ | loja oficial (VTEX FastStore): Black Friday e coleção de ofertas |
 | Netshoes, Centauro, Nike, Adidas, Magalu, Casas Bahia, Drogasil, Leroy Merlin, Terabyte, Pichau, Ludopedia… | ❌ | bloqueiam robôs (Cloudflare/403); não contornamos |
 | Amazon, Mercado Livre | ❌ direto | Termos de Uso / robots.txt; ver "APIs oficiais" abaixo |
 
@@ -47,7 +49,7 @@ instalado e logado (`claude` no PATH; usa sua assinatura).
 git clone <este repositório> ofertas && cd ofertas
 python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/pytest                      # 179 testes, sem rede
+.venv/bin/pytest                      # 190 testes, sem rede
 ```
 
 ### Bot do Telegram
@@ -144,12 +146,17 @@ Gatry).
 
 ### Custos do Claude
 
-Teto de `claude.daily_call_limit` (100) chamadas/dia; ao atingir, para e avisa
+Teto de `claude.daily_call_limit` (200) chamadas/dia; ao atingir, para e avisa
 uma vez no Telegram. Cada chamada avalia até 20 ofertas (~US$ 0,002 por lote
 de 5, pela estimativa do CLI) e o veredito fica em cache por oferta e preço.
 A fila vai em ordem de chance de dar nota boa: termos do `/quero`, depois
 ofertas com histórico real, depois com sinal da comunidade, e só então pelo
 desconto declarado.
+
+Se a **assinatura** do Claude bater o limite de 5 h (o mesmo limite do seu uso
+pessoal do Claude), o bot avisa uma vez com a hora de volta. Até lá só saem
+ofertas com histórico de preço real, marcadas "⚠️ Sem avaliação do Claude"; as
+outras esperam na fila.
 
 ## APIs oficiais (Amazon, Mercado Livre) — opcional, ainda não integradas
 

@@ -9,6 +9,7 @@ from ofertas.sources.ofertaesperta import OfertaEspertaSource
 from ofertas.sources.pechinchou import PechinchouSource
 from ofertas.sources.pelando import PelandoSource
 from ofertas.sources.promobit import PromobitSource
+from ofertas.sources.vtex import OlympikusSource, ReservaSource
 
 REGISTRY: dict[str, type[Source]] = {
     PromobitSource.name: PromobitSource,
@@ -18,6 +19,8 @@ REGISTRY: dict[str, type[Source]] = {
     PechinchouSource.name: PechinchouSource,
     OfertaEspertaSource.name: OfertaEspertaSource,
     ComparajogosSource.name: ComparajogosSource,
+    OlympikusSource.name: OlympikusSource,
+    ReservaSource.name: ReservaSource,
 }
 
 __all__ = ["REGISTRY", "Source"]

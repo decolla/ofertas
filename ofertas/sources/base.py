@@ -37,11 +37,16 @@ class Source(ABC):
     name: str = ""
 
     def __init__(self, client: PoliteClient, urls: list[str],
-                 rotate_urls: list[str] | None = None, rotate_per_run: int = 0):
+                 rotate_urls: list[str] | None = None, rotate_per_run: int = 0,
+                 max_seconds: float | None = None, clock=time.monotonic):
         self.client = client
         self.urls = urls
         self.rotate_urls = rotate_urls or []
         self.rotate_per_run = rotate_per_run
+        # Time budget for the whole source: a slow site (timeouts + retries)
+        # must not hold up every other source. Fixed URLs come first.
+        self.max_seconds = max_seconds
+        self.clock = clock
 
     def pages(self) -> list[str]:
         return list(self.urls) + rotation(self.rotate_urls, self.rotate_per_run)
@@ -50,7 +55,16 @@ class Source(ABC):
         seen: dict[str, RawOffer] = {}
         errors: list[Exception] = []
         pages = self.pages()
+        started = self.clock()
+        done = 0
         for url in pages:
+            if self.max_seconds and done and self.clock() - started > self.max_seconds:
+                log.warning("source_time_budget", extra={
+                    "source": self.name, "seconds": round(self.clock() - started),
+                    "skipped": len(pages) - done})
+                pages = pages[:done]  # skipped pages are not failures
+                break
+            done += 1
             try:
                 resp = self.client.get(url)
                 resp.raise_for_status()

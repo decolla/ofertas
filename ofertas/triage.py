@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ofertas.models import PriceStats, StoredOffer, Verdict
 from ofertas.schema import validate
@@ -136,6 +138,46 @@ class BudgetExceeded(TriageError):
     pass
 
 
+class RateLimited(TriageError):
+    """The Claude subscription's usage limit (e.g. "You've hit your 5-hour
+    limit · resets 2pm (America/Sao_Paulo)"): retrying before the reset only
+    burns calls, so Triage pauses until then."""
+
+    def __init__(self, message: str, text: str):
+        super().__init__(message)
+        self.text = text  # the CLI's own words, with the reset time
+
+
+_LIMIT = re.compile(r"hit your .*limit|usage limit|rate limit", re.I)
+_RESETS = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:\(([^)]+)\))?", re.I)
+COOLDOWN_KEY = "claude_cooldown_until"
+DEFAULT_COOLDOWN = timedelta(hours=1)
+
+
+def parse_reset(text: str, now: datetime) -> datetime | None:
+    """'resets 2pm (America/Sao_Paulo)' -> next 14:00 in that zone, as UTC."""
+    m = _RESETS.search(text or "")
+    if not m:
+        return None
+    hour, minute = int(m.group(1)), int(m.group(2) or 0)
+    ampm = (m.group(3) or "").lower()
+    if ampm == "pm" and hour < 12:
+        hour += 12
+    elif ampm == "am" and hour == 12:
+        hour = 0
+    if not 0 <= hour < 24 or not 0 <= minute < 60:
+        return None
+    try:
+        tz = ZoneInfo(m.group(4)) if m.group(4) else now.astimezone().tzinfo
+    except (ZoneInfoNotFoundError, ValueError):
+        tz = now.astimezone().tzinfo
+    local = now.astimezone(tz)
+    at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if at <= local:
+        at += timedelta(days=1)
+    return at.astimezone(timezone.utc)
+
+
 @dataclass
 class ClaudeCLI:
     """Runs `claude -p` and returns the parsed result JSON."""
@@ -243,7 +285,10 @@ def build_prompt(offers: list[StoredOffer], stats: dict | None = None,
 def parse_result(data: dict, expected_ids: set[str], model: str) -> dict[str, Verdict]:
     """Validates the CLI result; invalid items are dropped and logged."""
     if data.get("is_error") or data.get("subtype") != "success":
-        raise TriageError(f"claude retornou erro: {data.get('subtype')} {str(data.get('result'))[:200]}")
+        text = str(data.get("result"))[:200]
+        if _LIMIT.search(text):
+            raise RateLimited(f"limite de uso do Claude: {text}", text)
+        raise TriageError(f"claude retornou erro: {data.get('subtype')} {text}")
     out = data.get("structured_output")
     if out is None and isinstance(data.get("result"), str):
         try:
@@ -283,6 +328,7 @@ class Triage:
         max_batches_per_run: int | None = None,
         on_limit=None,
         today=date.today,
+        now=None,
     ):
         self.cli = cli
         self.usage = usage
@@ -292,6 +338,18 @@ class Triage:
         self.model = model
         self.on_limit = on_limit  # callback(text) for the one-time Telegram alert
         self.today = today
+        self.now = now or (lambda: datetime.now(timezone.utc))
+        self.rate_limited = False  # set when the subscription limit stopped this run
+
+    def cooldown_until(self) -> datetime | None:
+        raw = self.usage.get_setting(COOLDOWN_KEY)
+        if not raw:
+            return None
+        until = datetime.fromisoformat(raw)
+        return until if until > self.now() else None
+
+    def available(self) -> bool:
+        return self.cooldown_until() is None
 
     def remaining(self) -> int:
         return max(0, self.daily_limit - self.usage.claude_calls(self.today()))
@@ -301,6 +359,11 @@ class Triage:
         """`offers` must come in priority order (the runner sorts them): with
         max_batches_per_run only the first batches are judged this run."""
         results: dict[int, Verdict] = {}
+        until = self.cooldown_until()
+        if until is not None:
+            self.rate_limited = True
+            log.info("claude_cooldown", extra={"until": until.isoformat(), "pending": len(offers)})
+            return results
         if self.max_batches_per_run:
             # Spread a backlog over several runs instead of one burst.
             offers = offers[: self.max_batches_per_run * self.batch_size]
@@ -314,6 +377,9 @@ class Triage:
             try:
                 data = self.cli(build_prompt(batch, stats, feedback))
                 verdicts = parse_result(data, {str(o.id) for o in batch}, self.model)
+            except RateLimited as exc:
+                self._rate_limited(exc, day, len(offers) - start)
+                break
             except TriageError as exc:
                 log.error("triage_failed", extra={"error": str(exc), "batch": len(batch)})
                 continue
@@ -322,6 +388,23 @@ class Triage:
                                          "cost_usd": data.get("total_cost_usd")})
             results.update({int(k): v for k, v in verdicts.items()})
         return results
+
+    def _rate_limited(self, exc: RateLimited, day, pending: int) -> None:
+        """Pause until the subscription resets; this call didn't run, so it
+        doesn't count against our own daily budget."""
+        self.rate_limited = True
+        self.usage.refund_claude_call(day)
+        until = parse_reset(exc.text, self.now()) or (self.now() + DEFAULT_COOLDOWN)
+        self.usage.set_setting(COOLDOWN_KEY, until.isoformat(timespec="seconds"))
+        log.warning("claude_rate_limited", extra={"until": until.isoformat(), "pending": pending,
+                                                  "error": str(exc)})
+        if self.on_limit:
+            local = until.astimezone()
+            self.on_limit(
+                "⏸️ A assinatura do Claude atingiu o limite de uso. Volto a avaliar às "
+                f"{local:%H:%M}.\nAté lá, só saem ofertas com histórico de preço real "
+                "(marcadas \"sem avaliação do Claude\"); as outras ficam na fila."
+            )
 
     def _limit_reached(self, pending: int) -> None:
         day = self.today()

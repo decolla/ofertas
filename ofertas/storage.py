@@ -374,6 +374,12 @@ class Storage:
             (day.isoformat(),),
         )
 
+    def refund_claude_call(self, day: date) -> None:
+        self.conn.execute(
+            "UPDATE usage SET claude_calls = MAX(0, claude_calls - 1) WHERE day = ?",
+            (day.isoformat(),),
+        )
+
     def add_claude_cost(self, day: date, cost: float) -> None:
         self.conn.execute(
             "UPDATE usage SET cost_usd = cost_usd + ? WHERE day = ?", (cost, day.isoformat())

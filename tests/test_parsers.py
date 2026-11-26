@@ -184,3 +184,31 @@ class TestComparajogos:
     def test_layout_change_raises(self):
         with pytest.raises(ValueError, match="layout"):
             ComparajogosSource.parse('<script id="__NEXT_DATA__">{"props":{"pageProps":{}}}</script>')
+
+
+from ofertas.sources.vtex import OlympikusSource, ReservaSource  # noqa: E402
+
+
+class TestVtex:
+    def test_store_theme_state(self):
+        offers = OlympikusSource.parse(fixture_text("olympikus_blackfriday.html"))
+        assert [o.source_id for o in offers] == ["9529", "8282"]  # 11532 is out of stock
+        voa = offers[0]
+        assert voa.title == "Tênis Olympikus Voa 2" and voa.store == "Olympikus"
+        assert (voa.price, voa.list_price) == (199.99, 329.99)
+        assert voa.url == "https://www.olympikus.com.br/tenis-olympikus-voa-2-unissex-43533261-3-030/p"
+        assert voa.image.startswith("https://olympikus.vtexassets.com/")
+        assert "marca: Olympikus" in voa.extra["tags"] and voa.votes is None
+
+    def test_faststore_groups_skus_and_drops_out_of_stock(self):
+        offers = ReservaSource.parse(fixture_text("reserva_ofertas.html"))
+        assert [o.source_id for o in offers] == ["8988", "128911", "132927"]
+        camiseta = offers[0]
+        assert camiseta.price == 99.0 and camiseta.list_price == 129.0  # cheapest size kept
+        assert camiseta.title == "Camiseta Básica Brasa Pica-pau Bordado Reserva"  # brand appended
+        assert camiseta.url.startswith("https://www.usereserva.com/camiseta-basica-brasa")
+        assert camiseta.url.endswith("/p") and camiseta.store == "Reserva"
+
+    def test_unknown_layout_raises(self):
+        with pytest.raises(ValueError, match="layout"):
+            ReservaSource.parse("<html><body>nada</body></html>")

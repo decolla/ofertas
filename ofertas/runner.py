@@ -98,6 +98,7 @@ def collect(
             continue
         try:
             opts = {k: v for k, v in scfg.items() if k not in ("enabled", "urls")}
+            opts.setdefault("max_seconds", cfg.get("http.source_time_budget_seconds", 240))
             got = cls(client, scfg["urls"], **opts).fetch()
         except Exception as exc:  # isolate: one broken source never stops the others
             kind = "blocked" if isinstance(exc, BlockedError) else "error"
@@ -151,12 +152,21 @@ def judge(
             for off, _ in need:
                 if off.id in fresh:
                     storage.save_verdict(off.id, off.raw.price, fresh[off.id])
+    # Subscription limit hit: offers backed by our own price history (not
+    # just a store's "de" price) still go out, flagged; the rest wait.
+    unavailable = (triage is not None and triage.rate_limited
+                   and cfg.get("claude.send_history_when_unavailable", True))
     out = []
     for off, d in pre:
         if not d.ok:
             out.append((off, d))
             continue
         v = storage.get_verdict(off.id, off.raw.price)
+        if v is None and unavailable and not d.insufficient_history:
+            out.append((off, Decision(
+                ok=True, reasons=d.reasons + ["sem Claude (limite de uso): só o histórico de preços"],
+                stats=d.stats, wish=d.wish, brand=d.brand, unjudged=True)))
+            continue
         need_score = min_score if v is None else criteria.required_score(
             min_score, v.category, d.brand is not None, ccfg,
             brand_offset=int(cfg.get("brands.score_offset", 0)),

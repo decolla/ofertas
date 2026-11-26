@@ -82,3 +82,4 @@ class Decision:
     variants: list[str] = field(default_factory=list)  # sibling listings folded into this one
     wish: str | None = None  # /quero term this offer matched (lighter criterion)
     brand: str | None = None  # favourite brand matched (queue priority, score offset)
+    unjudged: bool = False  # sent on our price history alone: Claude was rate-limited

@@ -9,6 +9,9 @@ systemd user timer (a cada 20 min).
    subclasse de `Source` que implementa `fetch() -> list[RawOffer]`. Parsers são
    funções puras `parse(html: str) -> list[RawOffer]`, testadas com fixtures.
    Uma fonte que falha nunca derruba as outras (o runner isola cada `fetch`).
+   Cada fonte tem um orçamento de tempo (`http.source_time_budget_seconds`,
+   240 s): páginas fixas primeiro, o resto do rodízio fica para a próxima
+   execução (Promobit chegou a levar 16 min de madrugada em 2026-11-26).
 2. **Armazenamento** — `ofertas/storage.py`, `sqlite3` puro, migrações por
    `PRAGMA user_version`. Tabelas: offers, price_history, sent, verdicts, usage,
    source_health, settings.
@@ -27,12 +30,17 @@ systemd user timer (a cada 20 min).
    - Campos de usuário vão truncados e sem caracteres de controle (`_clip`);
      a justificativa aparece na mensagem marcada como "🤖 Claude".
    - Lotes de `claude.batch_size` (20). Cada chamada conta em `usage` **antes**
-     de ser feita; ao atingir `daily_call_limit` (100) para e avisa uma vez.
+     de ser feita; ao atingir `daily_call_limit` (200) para e avisa uma vez.
+   - Limite de 5 h da **assinatura** (compartilhado com o uso do usuário):
+     `RateLimited` devolve a chamada em `usage`, guarda
+     `claude_cooldown_until` (hora de "resets ..." ou +1 h) e avisa uma vez.
+     Até lá, com `claude.send_history_when_unavailable`, saem só ofertas com
+     histórico real, marcadas "⚠️ Sem avaliação do Claude" (`unjudged`).
    - Custo medido: ~US$ 0,002 e ~13 s por lote de 5 ofertas.
    - Fila em ordem de prioridade (o runner ordena; `Triage` só corta em
      `max_batches_per_run`): `/quero`, marca favorita, histórico real,
      comunidade, desconto.
-   - Os últimos `claude.feedback_examples` (20) 👍/👎 vão no prompt como
+   - Os últimos `claude.feedback_examples` (50) 👍/👎 vão no prompt como
      `gosto_do_usuario` (truncados, tratados como dados).
 4. **Critério** — `ofertas/criteria.py`, funções puras em duas fases:
    - `objective()`: loja permitida, dedupe e sinal de preço.
@@ -121,6 +129,18 @@ uma página (só falha a fonte se todas falharem; `BlockedError` para na hora).
   descartados; vendedor de marketplace vira loja "X (marketplace KaBuM!)". O
   preço "de" da KaBuM! costuma ser inflado: sem histórico exige 60%
   (`per_source.kabum`); o resto filtra o Claude/histórico.
+- **Olympikus** ✅ / **Reserva** ✅ lojas oficiais VTEX (`ofertas/sources/vtex.py`,
+  um parser para os dois storefronts): store-theme = `<template
+  data-varname="__STATE__">` (`Product:sp-<id>-none`, `priceRange`, estoque em
+  items→sellers→commertialOffer); FastStore = `__NEXT_DATA__`
+  `pageProps.data.search.products.edges` (1 nó por SKU, agrupado por
+  `productGroupID`, fica o mais barato em estoque). Sem comunidade; preço "de"
+  da própria loja. Nova loja VTEX = subclasse com `name`/`BASE`/`STORE`.
+  Avaliadas em 2026-11-25 e fora: Havaianas (termos proíbem usar as
+  "ferramentas de consulta"/reproduzir conteúdo), Hering, Insider, Farm, C&A,
+  Renner, Dafiti, Arezzo, Youcom (produtos só no navegador, sem dados na
+  página), Marisa, Zattini, Riachuelo (bloqueiam). Termos de Olympikus/Reserva
+  não legíveis sem JS; robots.txt permite as páginas usadas.
 - **Fora** ❌ (bloqueiam robôs, não contornamos): Hardmob, Terabyte, Magalu,
   Pichau, Netshoes, Centauro, Riachuelo, Drogasil, Casas Bahia, Leroy Merlin,
   Mobly, Tok&Stok, Nike, Adidas, Galápagos, Ludopedia, Cuponomia, Pão de
@@ -130,7 +150,9 @@ uma página (só falha a fonte se todas falharem; `BlockedError` para na hora).
   (Netshoes, Centauro, Nike, Adidas, Magalu, Casas Bahia, Drogasil, Leroy
   Merlin, Terabyte, Pichau...). **O usuário pediu (2026-11-25) para contornar
   o Cloudflare dessas lojas: recusado** (é a loja dizendo não a robôs; viola
-  a regra de coleta acima). Ludopedia/Galápagos não têm página de loja nos
+  a regra de coleta acima). Comparajogos declara Content-Signal
+  `ai-train=no, use=reference` no robots.txt (só lemos preço; nada de treino).
+  Ludopedia/Galápagos não têm página de loja nos
   agregadores; jogos de tabuleiro vêm de Comparajogos e das tags/categorias. O usuário quer cobertura direta de
   Amazon e ML **só por API oficial**: Amazon Creators API (PA-API 5 foi
   desativada em 2026) e API do ML (busca `/sites/MLB/search` com 403
@@ -208,4 +230,5 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
    quando a oferta encerra, resumo diário. ✅ (migração v3)
 7. Roupas/tênis/jogos: páginas por loja nos agregadores, nota mínima por
    categoria (moda/calçados/acessórios −8, jogos −10, esporte/brinquedos −5)
-   e ~60 marcas favoritas (−3, antes na fila). ✅
+   e ~60 marcas favoritas (−3, antes na fila). ✅ Lojas oficiais VTEX:
+   Olympikus e Reserva. ✅

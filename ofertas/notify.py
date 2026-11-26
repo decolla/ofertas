@@ -72,6 +72,10 @@ def format_offer(offer: StoredOffer, decision: Decision) -> str:
         shown = ", ".join(e(t[:60]) for t in decision.variants[:3])
         more = f" e mais {len(decision.variants) - 3}" if len(decision.variants) > 3 else ""
         lines.append(f"🎨 Mesmo preço em outras variações: {shown}{more}")
+    if decision.unjudged:
+        lines.append("")
+        lines.append("⚠️ <i>Sem avaliação do Claude (limite de uso da assinatura): passou pelo "
+                     "nosso histórico de preços, confira antes de comprar.</i>")
     if decision.insufficient_history:
         lines.append("")
         lines.append("⚠️ <i>Histórico insuficiente: baseado no desconto declarado (e na comunidade, se houver).</i>")

@@ -10,6 +10,10 @@ http:
   retries: 3              # tentativas extras em erro de rede/5xx
   backoff_base_seconds: 2 # espera 2, 4, 8...
   min_interval_per_host_seconds: 5
+  # Tempo máximo por fonte numa execução: as páginas fixas vão primeiro e o
+  # resto do rodízio fica para depois. Promobit levou 10-16 min de madrugada
+  # em 2026-11-26 (timeouts + novas tentativas) e atrasou tudo.
+  source_time_budget_seconds: 240
 
 sources:
   # Agregadores de comunidade (todas as categorias): a maior fonte de ofertas.
@@ -252,6 +256,23 @@ sources:
     enabled: true
     urls:
       - https://www.comparajogos.com.br/
+  # Lojas de roupa diretas (VTEX): páginas públicas de Black Friday/ofertas
+  # da própria loja. robots.txt permite e não achamos proibição de coleta nos
+  # termos (2026-11-25). Havaianas ficou de fora pelos termos de uso; Hering,
+  # Insider, Farm, C&A, Renner, Dafiti e Arezzo montam os produtos só no
+  # navegador; Marisa, Zattini e Riachuelo bloqueiam robôs. Estas lojas
+  # chegam também pelas páginas de loja dos agregadores.
+  olympikus:
+    enabled: true
+    urls:
+      - https://www.olympikus.com.br/blackfriday?order=OrderByBestDiscountDESC
+      - https://www.olympikus.com.br/blackfriday?order=OrderByBestDiscountDESC&page=2
+      - https://www.olympikus.com.br/black-friday-acessorios
+  reserva:
+    enabled: true
+    urls:
+      - https://www.usereserva.com/black-friday
+      - https://www.usereserva.com/colecao-reserva-ofertas
   # Loja direta (páginas de campanha públicas).
   kabum:
     enabled: true
@@ -436,8 +457,13 @@ claude:
   batch_size: 20
   max_batches_per_run: 3   # backlog grande (1ª execução) é diluído em várias execuções
   timeout_seconds: 180
-  daily_call_limit: 130   # Black Friday (antes 100); cada chamada avalia até 20 ofertas
-  feedback_examples: 20    # últimos 👍/👎 do usuário enviados no prompt (0 desliga)
+  daily_call_limit: 200   # Black Friday (antes 100/130); cada chamada avalia até 20 ofertas.
+                          # O limite real é o de 5 h da assinatura: ao bater, pausa até a hora
+                          # informada pelo CLI (sem gastar chamadas) e avisa uma vez.
+  feedback_examples: 50    # últimos 👍/👎 do usuário enviados no prompt (0 desliga)
+  # Durante a pausa pelo limite da assinatura, ofertas que passaram pelo NOSSO
+  # histórico de preços (não só pelo preço "de") saem marcadas "sem avaliação".
+  send_history_when_unavailable: true
 
 health:
   alert_after_failures: 5  # falhas seguidas de uma fonte antes de avisar no Telegram

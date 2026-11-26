@@ -338,3 +338,118 @@ def test_repost_with_other_title_is_not_sent_again_in_the_window(cfg):
     cheaper = routes(offerId=998, offerTitle="Ventilador Mondial 30cm Turbo", offerPrice=60.0)
     run(cfg, client_for(cheaper), db, tg, triage=tri)
     assert [o.raw.source_id for o in tg.offers] == [FAN, "998"]  # 17% cheaper: allowed
+
+
+# -- Claude subscription limit ("You've hit your 5-hour limit") ------------------
+from ofertas.triage import COOLDOWN_KEY, parse_reset  # noqa: E402
+
+LIMIT_MSG = "You've hit your 5-hour limit · resets 2pm (America/Sao_Paulo)"
+
+
+def limited_cli(prompt):
+    return {"subtype": "success", "is_error": True, "result": LIMIT_MSG}
+
+
+@pytest.mark.parametrize("text,now,expected", [
+    (LIMIT_MSG, datetime(2026, 11, 26, 15, 0, tzinfo=timezone.utc),   # 12:00 in SP
+     datetime(2026, 11, 26, 17, 0, tzinfo=timezone.utc)),             # 14:00 in SP
+    (LIMIT_MSG, datetime(2026, 11, 26, 18, 0, tzinfo=timezone.utc),   # 15:00: tomorrow
+     datetime(2026, 11, 27, 17, 0, tzinfo=timezone.utc)),
+    ("resets 9:30am (America/Sao_Paulo)", datetime(2026, 11, 26, 10, 0, tzinfo=timezone.utc),
+     datetime(2026, 11, 26, 12, 30, tzinfo=timezone.utc)),
+    ("limit reached", datetime(2026, 11, 26, 10, 0, tzinfo=timezone.utc), None),
+])
+def test_parse_reset(text, now, expected):
+    assert parse_reset(text, now) == expected
+
+
+def test_rate_limit_pauses_refunds_and_alerts_once():
+    db, alerts = Storage(":memory:"), []
+    now = datetime(2026, 11, 26, 15, 0, tzinfo=timezone.utc)
+    calls = []
+
+    def cli(prompt):
+        calls.append(prompt)
+        return limited_cli(prompt)
+
+    tri = Triage(cli, db, daily_limit=10, batch_size=1, on_limit=alerts.append,
+                 today=lambda: date(2026, 11, 26), now=lambda: now)
+    offers = [db.upsert_offer(RawOffer(source="gatry", source_id=str(i), title=f"X {i}",
+                                       price=10, url=f"https://g/{i}")) for i in range(3)]
+    assert tri.judge(offers) == {} and tri.rate_limited
+    assert len(calls) == 1                      # stopped at the first refusal
+    assert db.claude_calls(date(2026, 11, 26)) == 0  # refunded
+    assert db.get_setting(COOLDOWN_KEY).startswith("2026-11-26T17:00")
+    assert len(alerts) == 1 and "limite de uso" in alerts[0]
+
+    tri2 = Triage(cli, db, daily_limit=10, today=lambda: date(2026, 11, 26), now=lambda: now,
+                  on_limit=alerts.append)
+    assert tri2.judge(offers) == {} and len(calls) == 1 and len(alerts) == 1  # cooling down
+    later = Triage(lambda p: {"subtype": "success", "is_error": False, "structured_output": {"items": []}},
+                   db, daily_limit=10, today=lambda: date(2026, 11, 26),
+                   now=lambda: datetime(2026, 11, 26, 17, 1, tzinfo=timezone.utc))
+    assert later.available()
+
+
+def test_rate_limited_sends_only_history_backed_offers_flagged(cfg):
+    from datetime import timedelta
+
+    from ofertas.notify import format_offer
+
+    cfg.data["claude"] = {"enabled": True}
+    cfg.data["criteria"].update({"min_history_points": 3, "history_days": 90,
+                                 "min_discount_vs_median": 0.25, "min_score": 80})
+    page = fixture_text("gatry_promocoes.html")
+    db, tg = Storage(":memory:"), FakeTelegram()
+    t0 = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    r = routes()
+    r["https://gatry.com/promocoes"] = html(page)
+    for day in range(4):  # history at R$ 899, no Claude yet
+        run(cfg, client_for(r), db, tg, now=t0 + timedelta(days=day))
+    tg.offers.clear()
+    r["https://gatry.com/promocoes"] = html(page.replace("R$ 899,00", "R$ 599,00"))
+    tri = Triage(limited_cli, db, daily_limit=10, today=lambda: date(2026, 11, 6),
+                 now=lambda: t0 + timedelta(days=5))
+    rep = run(cfg, client_for(r), db, tg, triage=tri, now=t0 + timedelta(days=5))
+    sent = [o.raw.title[:15] for o in tg.offers]
+    assert sent == ["Monitor Samsung"]  # the fan (declared discount only) waits
+    d = tg.decisions[-1]
+    assert d.unjudged and "Sem avaliação do Claude" in format_offer(tg.offers[0], d)
+
+
+def test_rate_limited_offer_without_history_waits(cfg):
+    cfg.data["claude"] = {"enabled": True}
+    db, tg = Storage(":memory:"), FakeTelegram()
+    tri = Triage(limited_cli, db, daily_limit=10, today=lambda: date(2026, 11, 26))
+    rep = run(cfg, client_for(routes()), db, tg, triage=tri)
+    assert tg.offers == []  # the fan passes on declared discount only
+    fan = next(d for o, d in rep.evaluated if o.raw.source_id == FAN)
+    assert fan.pending and not fan.ok and not fan.unjudged
+
+
+# -- per-source time budget ------------------------------------------------------
+def test_source_time_budget_stops_rotation_without_failing():
+    from types import SimpleNamespace
+
+    from ofertas.models import RawOffer
+    from ofertas.sources.base import Source
+
+    clock = {"t": 0.0}
+    got = []
+
+    class SlowClient:
+        def get(self, url):
+            got.append(url)
+            clock["t"] += 100  # every page takes 100 s
+            return SimpleNamespace(text=url, raise_for_status=lambda: None)
+
+    class S(Source):
+        name = "slow"
+
+        @staticmethod
+        def parse(html):
+            return [RawOffer(source="slow", source_id=html, title=html, price=10.0, url=html)]
+
+    src = S(SlowClient(), ["a", "b", "c", "d"], max_seconds=250, clock=lambda: clock["t"])
+    offers = src.fetch()
+    assert got == ["a", "b", "c"] and len(offers) == 3  # 4th page skipped, no error
